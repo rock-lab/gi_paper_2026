@@ -1,0 +1,26 @@
+# Conda environment for the genetic-interaction (GI) analysis code.
+#
+#   conda env create -f environment.yml
+#   conda activate gi_paper_2026
+#
+# Covers the whole example pipeline (run_example.sh): log2FC, GI scoring,
+# GAM correction (pygam), and the per-screen / joint Stan mixture models
+# (cmdstanpy + a prebuilt cmdstan toolchain from conda-forge).
+#
+# Optional extras NOT installed here (add if you need them):
+#   - pysam, subread : only for the fastq -> counts step (process_reads.py).
+#   - r-base, r-mgcv : the R/mgcv version of the GAM correction
+#     (gam_correction_standalone.R). The Python default (pygam) needs no R.
+name: gi_paper_2026
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - numpy
+  - pandas
+  - scipy
+  - tqdm
+  - pyarrow
+  - cmdstanpy
+  - cmdstan
+  - pygam

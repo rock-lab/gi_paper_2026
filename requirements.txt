@@ -1,0 +1,27 @@
+# Python dependencies for the public GI joint-model toy pipeline.
+#
+#   pip install -r requirements.txt
+#
+# The CmdStan C++ toolchain (compiled/managed by cmdstanpy) is required ONLY for
+# the Bayesian sampling steps (per-screen Step 4 and joint Step 5). Build it once
+# after installing the packages below:
+#
+#   python -c "import cmdstanpy; cmdstanpy.install_cmdstan()"
+#
+# Not pip-installable from here (optional / step-specific):
+#   * subread ...... ONLY for the optional FASTQ -> counts Step 1.
+#                    Install via your OS package manager, e.g. `sudo apt install subread`.
+#   * R + mgcv ..... optional alternative to pygam for the Step-3 GAM correction.
+
+cmdstanpy>=1.2
+numpy>=1.24
+pandas>=2.0
+scipy>=1.10
+tqdm>=4.65
+
+# --- Optional Python extras (uncomment as needed) ---------------------------
+# pygam>=0.9      # optional: Python GAM correction of GI scores (Step 3); R+mgcv is the alternative
+# pysam>=0.21     # only for the optional FASTQ -> counts Step 1 (BAM handling)
+# pyarrow>=12.0   # optional: faster IO for very large guide-pair datasets
+# matplotlib>=3.7 # only for the demo notebooks / plotting
+# seaborn>=0.12   # only for the demo notebooks / plotting
