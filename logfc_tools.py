@@ -16,6 +16,7 @@ import numpy as np
 import pandas as pd
 import logging
 from pathlib import Path
+from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(format='%(levelname)s: %(message)s')
@@ -88,20 +89,25 @@ def load_count_file(filepath):
         raise
 
 
-def get_count_matrix_from_dataframe(df, id_col="Id"):
+def get_count_matrix_from_dataframe(df):
     """
     Extract count matrix from dataframe.
 
+    First column is assumed to be IDs, all other columns are count replicates.
+
     Args:
         df (pd.DataFrame): Count dataframe
-        id_col (str): Column name containing sgRNA IDs
 
     Returns:
-        tuple: (sgRNA_ids, count_matrix) where count_matrix has shape (n_sgrnas, n_samples)
+        tuple: (sgRNA_ids, count_matrix) where count_matrix has shape (n_sgrnas, n_replicates)
     """
-    sgrna_ids = df[id_col].values
-    count_cols = [col for col in df.columns if col != id_col]
-    count_matrix = df[count_cols].values.astype(float)
+    # First column is IDs, regardless of name
+    sgrna_ids = df.iloc[:, 0].values
+
+    # All other columns are counts
+    count_matrix = df.iloc[:, 1:].values.astype(float)
+
+    logger.debug(f"Loaded {len(sgrna_ids)} sgRNAs with {count_matrix.shape[1]} replicate(s)")
     return sgrna_ids, count_matrix
 
 
@@ -156,10 +162,13 @@ def get_logfc_dataframe_from_metadata(metadata_path, output_path=None, summary_m
     results = []
 
     # Group by experiment and generations to pair +ATC/-ATC conditions
-    for (strain, experiment), exp_group in metadata.groupby(['strain', 'experiment']):
-        logger.info(f"Processing {strain} {experiment}")
+    exp_groups = list(metadata.groupby(['strain', 'experiment']))
+    print(f"\nProcessing {len(exp_groups)} experiment(s)...")
+    for (strain, experiment), exp_group in tqdm(exp_groups, desc="Experiments", unit="exp"):
+        logger.debug(f"Processing {strain} {experiment}")
 
-        for generations, gen_group in exp_group.groupby('generations'):
+        gen_groups = list(exp_group.groupby('generations'))
+        for generations, gen_group in tqdm(gen_groups, desc=f"  Generations for {experiment}", unit="gen", leave=False):
             # Get +ATC and -ATC conditions for this generation
             plus_atc = gen_group[gen_group['atc'] == 'plus']
             minus_atc = gen_group[gen_group['atc'] == 'minus']
@@ -175,64 +184,232 @@ def get_logfc_dataframe_from_metadata(metadata_path, output_path=None, summary_m
             # Load and merge count data
             plus_data = []
             minus_data = []
+            plus_ids_list = []
+            minus_ids_list = []
             sgrna_ids = None
 
-            for count_file in plus_count_files:
-                if not os.path.exists(count_file):
-                    logger.error(f"Count file not found: {count_file}")
-                    continue
-                df = load_count_file(count_file)
-                ids, counts = get_count_matrix_from_dataframe(df)
-                if sgrna_ids is None:
-                    sgrna_ids = ids
-                plus_data.append(counts.flatten() if counts.ndim == 2 and counts.shape[1] == 1 else counts)
+            # Build sequence to guide number mapping
+            seq_to_guide_num = {}
 
-            for count_file in minus_count_files:
+            # Load plus condition files
+            for count_file in tqdm(plus_count_files, desc=f"    Loading +ATC files (G{generations})", unit="file", leave=False):
+                # Expand tilde in path
+                count_file = os.path.expanduser(count_file)
                 if not os.path.exists(count_file):
                     logger.error(f"Count file not found: {count_file}")
                     continue
                 df = load_count_file(count_file)
                 ids, counts = get_count_matrix_from_dataframe(df)
-                minus_data.append(counts.flatten() if counts.ndim == 2 and counts.shape[1] == 1 else counts)
+                plus_ids_list.append(ids)
+                # Keep as matrix for now, will average later
+                plus_data.append(counts)
+
+            # Load minus condition files
+            for count_file in tqdm(minus_count_files, desc=f"    Loading -ATC files (G{generations})", unit="file", leave=False):
+                # Expand tilde in path
+                count_file = os.path.expanduser(count_file)
+                if not os.path.exists(count_file):
+                    logger.error(f"Count file not found: {count_file}")
+                    continue
+                df = load_count_file(count_file)
+                ids, counts = get_count_matrix_from_dataframe(df)
+                minus_ids_list.append(ids)
+                # Keep as matrix for now, will average later
+                minus_data.append(counts)
 
             if not plus_data or not minus_data:
                 logger.warning(f"No valid count data for {strain} {experiment} G{generations}")
                 continue
 
-            # Convert to arrays
-            plus_matrix = np.column_stack(plus_data) if len(plus_data) > 1 else plus_data[0].reshape(-1, 1)
-            minus_matrix = np.column_stack(minus_data) if len(minus_data) > 1 else minus_data[0].reshape(-1, 1)
+            # Align all count files (plus AND minus) to a single canonical row
+            # order BEFORE stacking. The log2FC step pairs +ATc and -ATc rows
+            # POSITIONALLY, so every file must contribute rows for the same
+            # sgRNAs in the same order. We therefore reindex each file BY ID
+            # (never by positional masks) to the common set of sgRNAs.
+            if plus_ids_list:
+                sgrna_ids = plus_ids_list[0]
+                all_ids = plus_ids_list + minus_ids_list
+                identical = all(
+                    len(ids) == len(sgrna_ids) and np.array_equal(ids, sgrna_ids)
+                    for ids in all_ids
+                )
+                if not identical:
+                    # Intersection of IDs present in EVERY plus and minus file
+                    # (np.intersect1d returns a sorted, unique array).
+                    common_ids = sgrna_ids
+                    for ids in all_ids[1:]:
+                        common_ids = np.intersect1d(common_ids, ids)
+
+                    if len(common_ids) < 100:  # need a reasonable number of guides
+                        logger.error(
+                            f"Too few common sgRNAs ({len(common_ids)}) across the count "
+                            f"files for {strain} {experiment} G{generations}; skipping")
+                        continue
+                    logger.warning(
+                        f"Count files for {strain} {experiment} G{generations} do not "
+                        f"share identical sgRNA sets/order; realigning all files to "
+                        f"{len(common_ids)} common sgRNAs")
+
+                    def _reindex_to_common(file_ids, matrix):
+                        # Select this file's rows for common_ids, IN common_ids order.
+                        pos = {sid: k for k, sid in enumerate(file_ids)}
+                        sel = np.fromiter((pos[sid] for sid in common_ids),
+                                          dtype=int, count=len(common_ids))
+                        return matrix[sel]
+
+                    plus_data = [_reindex_to_common(plus_ids_list[j], plus_data[j])
+                                 for j in range(len(plus_data))]
+                    minus_data = [_reindex_to_common(minus_ids_list[j], minus_data[j])
+                                  for j in range(len(minus_data))]
+                    sgrna_ids = common_ids
+
+            # Convert to arrays for log2FC calculation
+            try:
+                # Concatenate all replicates (both within files and across files)
+                # Each element in plus_data/minus_data is a matrix of shape (n_sgrnas, n_replicates_in_file)
+                plus_matrix = np.hstack(plus_data) if len(plus_data) > 0 else np.array([[]])
+                minus_matrix = np.hstack(minus_data) if len(minus_data) > 0 else np.array([[]])
+
+                logger.debug(f"Plus matrix shape: {plus_matrix.shape} (sgRNAs x replicates)")
+                logger.debug(f"Minus matrix shape: {minus_matrix.shape} (sgRNAs x replicates)")
+
+                # Check that we have the same number of sgRNAs
+                if plus_matrix.shape[0] != minus_matrix.shape[0]:
+                    logger.error(f"Mismatch in sgRNA count: plus has {plus_matrix.shape[0]}, minus has {minus_matrix.shape[0]}")
+                    continue
+
+            except Exception as e:
+                logger.error(f"Error creating count matrices: {e}")
+                logger.info(f"  Plus data shapes: {[p.shape for p in plus_data]}")
+                logger.info(f"  Minus data shapes: {[m.shape for m in minus_data]}")
+                continue
 
             # Apply LOD filtering to experimental condition
             plus_summary = get_summary_stat_function(summary_metric)(plus_matrix)
             good_detection = plus_summary >= lod_limit
 
+            # First pass: build sequence to guide number mapping
+            # We need to scan all IDs first to assign consistent numbering
+            orf_seq_to_num = {}
+            for sgrna_id in sgrna_ids:
+                parts = sgrna_id.split('_')
+                if len(parts) == 4:
+                    # First guide
+                    if parts[0] == "Negative":
+                        orf1 = "Negative"
+                    elif ':' in parts[0]:
+                        orf1 = parts[0].split(':')[0]
+                    else:
+                        orf1 = parts[0]
+                    seq1 = parts[1]
+
+                    # Second guide
+                    if parts[2] == "Negative":
+                        orf2 = "Negative"
+                    elif ':' in parts[2]:
+                        orf2 = parts[2].split(':')[0]
+                    else:
+                        orf2 = parts[2]
+                    seq2 = parts[3]
+
+                    # Track unique sequences for each ORF
+                    if (orf1, seq1) not in orf_seq_to_num:
+                        if orf1 not in seq_to_guide_num:
+                            seq_to_guide_num[orf1] = {}
+                        if seq1 not in seq_to_guide_num[orf1]:
+                            seq_to_guide_num[orf1][seq1] = len(seq_to_guide_num[orf1]) + 1
+                        orf_seq_to_num[(orf1, seq1)] = seq_to_guide_num[orf1][seq1]
+
+                    if (orf2, seq2) not in orf_seq_to_num:
+                        if orf2 not in seq_to_guide_num:
+                            seq_to_guide_num[orf2] = {}
+                        if seq2 not in seq_to_guide_num[orf2]:
+                            seq_to_guide_num[orf2][seq2] = len(seq_to_guide_num[orf2]) + 1
+                        orf_seq_to_num[(orf2, seq2)] = seq_to_guide_num[orf2][seq2]
+
             # Calculate log2FC
             logfc_values = log2fc(minus_matrix, plus_matrix, pseudo=pseudo, summary_metric=summary_metric)
 
             # Create results for this generation
-            for i, sgrna_id in enumerate(sgrna_ids):
+            for i, sgrna_id in enumerate(tqdm(sgrna_ids, desc=f"    Processing sgRNAs (G{generations})", unit="sgRNA", leave=False)):
                 # Parse sgRNA information from ID
-                if '_' in sgrna_id:
-                    parts = sgrna_id.split('_')
-                    orf = parts[0] if len(parts) > 0 else sgrna_id
-                    seq = parts[-1] if len(parts) > 1 else ""
-                else:
-                    orf = sgrna_id
-                    seq = ""
+                # Format expected: RVBD0001:dnaA_GATGACGATTTGCTTG_RVBD0002:dnaN_ACCCGGGCGCCAAGTGCTCAGC
+                # Or for negatives: Negative_GATGACGATTTGCTTG_RVBD0002:dnaN_ACCCGGGCGCCAAGTGCTCAGC
+                parts = sgrna_id.split('_')
 
-                result_row = {
-                    'strain': strain,
-                    'experiment': experiment,
-                    'G': generations,
-                    'ORF': orf,
-                    'SEQ': seq,
-                    'ID': sgrna_id,
-                    'Y': logfc_values[i],
-                    'exp_mean': plus_summary[i],
-                    'ctrl_mean': get_summary_stat_function(summary_metric)(minus_matrix)[i],
-                    'GOOD': good_detection[i]
-                }
+                # Check if this is paired guide data (should have 4 parts)
+                if len(parts) == 4:
+                    # Parse first guide
+                    if parts[0] == "Negative":
+                        orf1 = "Negative"
+                        gene1 = ""
+                    elif ':' in parts[0]:
+                        orf1 = parts[0].split(':')[0]  # RVBD0001
+                        gene1 = parts[0].split(':')[1]  # dnaA
+                    else:
+                        orf1 = parts[0]
+                        gene1 = ""
+                    seq1 = parts[1]  # SEQUENCE1
+
+                    # Parse second guide
+                    if parts[2] == "Negative":
+                        orf2 = "Negative"
+                        gene2 = ""
+                    elif ':' in parts[2]:
+                        orf2 = parts[2].split(':')[0]  # RVBD0002
+                        gene2 = parts[2].split(':')[1]  # dnaN
+                    else:
+                        orf2 = parts[2]
+                        gene2 = ""
+                    seq2 = parts[3]  # SEQUENCE2
+
+                    # Get guide numbers based on sequences
+                    num1 = orf_seq_to_num.get((orf1, seq1), 1)
+                    num2 = orf_seq_to_num.get((orf2, seq2), 1)
+
+                    # Create combined ORF and SEQ for compatibility
+                    orf = f"{orf1}_{orf2}"
+                    seq = f"{seq1}_{seq2}"
+
+                    # Create guide names with numbering (e.g., RVBD0001-1, Negative-3)
+                    guide_name1 = f"{orf1}-{num1}"
+                    guide_name2 = f"{orf2}-{num2}"
+
+                    result_row = {
+                        'strain': strain,
+                        'experiment': experiment,
+                        'generations': generations,
+                        'ID': sgrna_id,
+                        'orf': orf,
+                        'seq': seq,
+                        'orf1': orf1,
+                        'orf2': orf2,
+                        'seq1': seq1,
+                        'seq2': seq2,
+                        'guide_name': f"{guide_name1}_{guide_name2}",
+                        'guide_name1': guide_name1,
+                        'guide_name2': guide_name2,
+                        'log2fc': logfc_values[i],
+                        'exp_mean': plus_summary[i],
+                        'ctrl_mean': get_summary_stat_function(summary_metric)(minus_matrix)[i],
+                        'good': good_detection[i]
+                    }
+                else:
+                    # Fallback for unexpected formats
+                    logger.warning(f"Unexpected ID format: {sgrna_id}")
+                    result_row = {
+                        'strain': strain,
+                        'experiment': experiment,
+                        'generations': generations,
+                        'ID': sgrna_id,
+                        'orf': sgrna_id,
+                        'seq': "",
+                        'log2fc': logfc_values[i],
+                        'exp_mean': plus_summary[i],
+                        'ctrl_mean': get_summary_stat_function(summary_metric)(minus_matrix)[i],
+                        'good': good_detection[i]
+                    }
+
                 results.append(result_row)
 
     # Convert to DataFrame
@@ -243,6 +420,78 @@ def get_logfc_dataframe_from_metadata(metadata_path, output_path=None, summary_m
         result_df.to_csv(output_path, sep='\t', index=False)
 
     return result_df
+
+
+def add_single_mutant_fitness(df, negative_orf_names=["Negative", "NT", "NonTargeting"]):
+    """
+    Add log2fc_nt1 and log2fc_nt2 columns with single mutant fitness values.
+
+    These represent the fitness of guide1+negative and guide2+negative pairs,
+    essential for calculating genetic interaction scores.
+
+    Args:
+        df (pd.DataFrame): DataFrame with log2FC values
+        negative_orf_names (list): ORF names that represent negative controls
+
+    Returns:
+        pd.DataFrame: DataFrame with log2fc_nt1 and log2fc_nt2 columns added
+    """
+    logger.info("Adding single mutant fitness values (log2fc_nt1, log2fc_nt2)")
+    df = df.copy()
+
+    # Only process if we have paired guide columns
+    if not all(col in df.columns for col in ['orf1', 'orf2', 'seq1', 'seq2']):
+        logger.warning("Paired guide columns not found, skipping single mutant fitness calculation")
+        return df
+
+    # Calculate log2fc_nt1 (guide1 + negative control)
+    log2fc_nt1_values = {}
+    log2fc_nt2_values = {}
+
+    groups = list(df.groupby(['strain', 'experiment', 'generations']))
+    for (strain, experiment, generation), group in tqdm(groups, desc="Finding single mutant fitness", unit="group", leave=False):
+        # For each unique guide1, find its fitness with negative control
+        for seq1 in group['seq1'].unique():
+            if pd.isna(seq1):
+                continue
+            # Find where guide1 is paired with negative control
+            mask = (group['seq1'] == seq1) & group['orf2'].isin(negative_orf_names)
+            if mask.any():
+                log2fc_nt1_values[(strain, experiment, generation, seq1)] = group.loc[mask, 'log2fc'].median()
+
+        # For each unique guide2, find its fitness with negative control
+        for seq2 in group['seq2'].unique():
+            if pd.isna(seq2):
+                continue
+            # Find where guide2 is paired with negative control
+            mask = (group['seq2'] == seq2) & group['orf1'].isin(negative_orf_names)
+            if mask.any():
+                log2fc_nt2_values[(strain, experiment, generation, seq2)] = group.loc[mask, 'log2fc'].median()
+
+    # Apply values to dataframe
+    df['log2fc_nt1'] = df.apply(
+        lambda row: log2fc_nt1_values.get(
+            (row['strain'], row['experiment'], row['generations'], row.get('seq1', None)),
+            np.nan
+        ) if 'seq1' in row else np.nan,
+        axis=1
+    )
+
+    df['log2fc_nt2'] = df.apply(
+        lambda row: log2fc_nt2_values.get(
+            (row['strain'], row['experiment'], row['generations'], row.get('seq2', None)),
+            np.nan
+        ) if 'seq2' in row else np.nan,
+        axis=1
+    )
+
+    # Calculate log2fc_delta (deviation from additive expectation - input for GI modeling)
+    # Note: This is NOT the final GI score - it's the input for Stan modeling
+    if 'log2fc_nt1' in df.columns and 'log2fc_nt2' in df.columns:
+        df['log2fc_delta'] = df['log2fc'] - (df['log2fc_nt1'] + df['log2fc_nt2'])
+        logger.info(f"Calculated log2fc_delta for {df['log2fc_delta'].notna().sum()} measurements")
+
+    return df
 
 
 def normalize_negative_controls(df, negative_orf_names=["Negative", "NT", "NonTargeting"]):
@@ -259,22 +508,39 @@ def normalize_negative_controls(df, negative_orf_names=["Negative", "NT", "NonTa
     logger.info("Normalizing using negative controls")
     df_norm = df.copy()
 
-    for (strain, experiment, generation), group in df.groupby(['strain', 'experiment', 'G']):
-        # Find negative controls
-        is_negative = group['ORF'].isin(negative_orf_names)
-
-        if not is_negative.any():
-            logger.warning(f"No negative controls found for {strain} {experiment} G{generation}")
+    groups = list(df.groupby(['strain', 'experiment', 'generations']))
+    for (strain, experiment, generation), group in tqdm(groups, desc="Normalizing by negative controls", unit="group", leave=False):
+        # Find double negative controls (BOTH guides are negative/non-targeting)
+        # Check if we have the guide columns to identify double negatives
+        if 'orf1' in group.columns and 'orf2' in group.columns:
+            # Both guides must be negative controls
+            is_double_negative = (
+                group['orf1'].isin(negative_orf_names) &
+                group['orf2'].isin(negative_orf_names)
+            )
+        elif 'orf' in group.columns:
+            # Fallback: check the combined orf column for patterns like "Negative_Negative"
+            is_double_negative = group['orf'].apply(
+                lambda x: all(part in negative_orf_names for part in str(x).split('_'))
+                if pd.notna(x) else False
+            )
+        else:
+            logger.warning(f"Cannot identify negative controls - missing orf columns")
             continue
 
-        # Calculate negative control median
-        negative_median = np.median(group.loc[is_negative, 'Y'])
+        if not is_double_negative.any():
+            logger.warning(f"No double negative controls found for {strain} {experiment} generation {generation}")
+            continue
 
-        # Subtract from all values in this group
+        # Calculate the median log2FC of double negative controls
+        negative_median = np.median(group.loc[is_double_negative, 'log2fc'])
+
+        # Subtract from all values in this group to normalize
         group_indices = group.index
-        df_norm.loc[group_indices, 'Y'] = group['Y'] - negative_median
+        df_norm.loc[group_indices, 'log2fc'] = group['log2fc'] - negative_median
 
-        logger.debug(f"Applied normalization: {strain} {experiment} G{generation}, offset={negative_median:.3f}")
+        logger.debug(f"Applied normalization: {strain} {experiment} generation {generation}, "
+                    f"double negatives={is_double_negative.sum()}, offset={negative_median:.3f}")
 
     return df_norm
 
@@ -308,10 +574,21 @@ if __name__ == "__main__":
         lod_limit=args.lod_limit
     )
 
+    # Check if we have any data
+    if len(df) == 0:
+        logger.error("No data to process - check that count files exist and are readable")
+        sys.exit(1)
+
     # Apply normalization if requested
     if args.normalize:
         df = normalize_negative_controls(df)
 
+    # Add single mutant fitness values for GI calculation (if paired guide data)
+    if 'orf1' in df.columns and 'orf2' in df.columns:
+        df = add_single_mutant_fitness(df)
+
     # Save results
     df.to_csv(args.output, sep='\t', index=False)
     logger.info(f"Saved {len(df)} log2FC measurements to {args.output}")
+    if 'log2fc_delta' in df.columns:
+        logger.info(f"Includes log2fc_delta (GI scores) for {df['log2fc_delta'].notna().sum()} measurements")

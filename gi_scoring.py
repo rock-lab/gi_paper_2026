@@ -46,9 +46,125 @@ try:
 except ImportError:
     HAS_PYARROW = False
 
+try:
+    from pygam import GAM, s
+    HAS_PYGAM = True
+except ImportError:
+    HAS_PYGAM = False
+
 logger = logging.getLogger(__name__)
 logging.basicConfig(format='%(levelname)s: %(message)s')
 logger.setLevel(logging.DEBUG)
+
+
+# Module-level functions for multiprocessing
+def process_guide_id_for_model(args):
+    """
+    Process a single guide ID to create model data JSON.
+    Module-level function for multiprocessing compatibility.
+    """
+    guide_id, logfc_df, model_data_dir, force = args
+
+    # Parse the guide ID to get ORF1 and ORF2 for folder structure
+    # Format: ORF1:gene1_SEQ1_ORF2:gene2_SEQ2
+    parts = guide_id.split('_')
+    if len(parts) == 4:
+        orf1 = parts[0].split(':')[0] if ':' in parts[0] else parts[0]
+        orf2 = parts[2].split(':')[0] if ':' in parts[2] else parts[2]
+    else:
+        # Fallback for unexpected format
+        orf1 = "unknown"
+        orf2 = "unknown"
+
+    # Create hierarchical directory structure: ORF1/ORF2/
+    output_dir = model_data_dir / orf1 / orf2
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Create safe filename from guide ID
+    safe_id = guide_id.replace('/', '_').replace('\\', '_').replace(':', '_')
+    json_path = output_dir / f"{safe_id}.json"
+
+    if json_path.exists() and not force:
+        return None
+
+    # Get data for this guide pair
+    pair_data = logfc_df[logfc_df['ID'] == guide_id].copy()
+
+    if len(pair_data) < 3:  # Need minimum data points
+        return None
+
+    # Apply quality filters if available
+    if 'good' in pair_data.columns:
+        pair_data = pair_data[pair_data['good']]
+
+    if len(pair_data) < 3:
+        return None
+
+    # Sort by generation
+    pair_data = pair_data.sort_values('generations')
+
+    # Create model data using raw log2fc values - ONLY NUMERIC VALUES FOR STAN
+    model_data_dict = {
+        'N': len(pair_data),
+        'J': 1,  # Single guide pair
+        'y': pair_data['log2fc'].tolist(),  # Raw log2fc values as input
+        'x': pair_data['generations'].tolist(),
+        'guides': [1] * len(pair_data)  # All data from same pair, using integer index
+    }
+
+    # Save JSON for Stan (numeric only)
+    with open(json_path, 'w') as f:
+        json.dump(model_data_dict, f, indent=2)
+
+    # Save metadata TSV alongside JSON with additional information
+    metadata_path = str(json_path).replace('.json', '.tsv')
+    metadata_df = pair_data[['strain', 'experiment', 'generations', 'ID', 'log2fc']].copy()
+    metadata_df['guide_id'] = guide_id
+    metadata_df['guide_index'] = 1  # The index used in Stan
+    metadata_df.to_csv(metadata_path, sep='\t', index=False)
+
+    return str(json_path)
+
+
+def run_stan_model_for_pair(args):
+    """
+    Run Stan model for a single guide pair.
+    Module-level function for multiprocessing compatibility.
+    """
+    model, json_path, chains, iter_sampling = args
+
+    try:
+        # Load data
+        with open(json_path, 'r') as f:
+            data = json.load(f)
+
+        # Determine output path with same folder structure
+        # Replace model_data with samples in the path
+        output_path = str(json_path).replace('/model_data/', '/samples/').replace('.json', '_samples.tsv')
+
+        # Create output directory if needed
+        output_dir = os.path.dirname(output_path)
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Run Stan model
+        fit = model.sample(
+            data=data,
+            chains=chains,
+            iter_sampling=iter_sampling,
+            show_progress=False,
+            show_console=False
+            # refresh parameter removed - let Stan use default
+        )
+
+        # Save results
+        draws_df = fit.draws_pd()
+        draws_df.to_csv(output_path, sep='\t', index=False)
+
+        return True
+
+    except Exception as e:
+        logger.debug(f"Stan model failed for {json_path}: {e}")
+        return False
 
 
 class GIScoring:
@@ -81,14 +197,20 @@ class GIScoring:
         for dir_path in [self.model_data_dir, self.samples_dir, self.results_dir]:
             dir_path.mkdir(parents=True, exist_ok=True)
 
-        # Load or create Stan model
-        if stan_model_path and HAS_CMDSTAN:
-            self.stan_model = CmdStanModel(stan_file=stan_model_path)
-        elif HAS_CMDSTAN:
-            self.stan_model = self._create_default_stan_model()
-        else:
-            logger.warning("CmdStanPy not available. Stan modeling will be disabled.")
-            self.stan_model = None
+        # Lazy load Stan model - only initialize when needed
+        self.stan_model_path = stan_model_path
+        self._stan_model = None  # Will be loaded on first use
+
+    @property
+    def stan_model(self):
+        """Lazy-load Stan model only when needed."""
+        if self._stan_model is None and HAS_CMDSTAN:
+            logger.info("Initializing Stan model...")
+            if self.stan_model_path:
+                self._stan_model = CmdStanModel(stan_file=self.stan_model_path)
+            else:
+                self._stan_model = self._create_default_stan_model()
+        return self._stan_model
 
     def _create_default_stan_model(self):
         """Create default Stan model for genetic interactions."""
@@ -171,12 +293,12 @@ generated quantities {
         logger.info("Extracting guide pairs from log2FC data...")
 
         # Ensure we have the required columns
-        required_cols = ['ORF1', 'ORF2', 'SEQ1', 'SEQ2', 'GUIDE_NAME1', 'GUIDE_NAME2']
+        required_cols = ['orf1', 'orf2', 'seq1', 'seq2', 'guide_name1', 'guide_name2']
         missing_cols = [col for col in required_cols if col not in logfc_df.columns]
 
         if missing_cols:
             # Try to create missing columns if possible
-            if 'GUIDE_NAME1' not in logfc_df.columns and all(col in logfc_df.columns for col in ['ORF1', 'SEQ1']):
+            if 'guide_name1' not in logfc_df.columns and all(col in logfc_df.columns for col in ['orf1', 'seq1']):
                 logfc_df = self._add_guide_names(logfc_df)
             else:
                 raise ValueError(f"Missing required columns: {missing_cols}")
@@ -187,15 +309,15 @@ generated quantities {
 
         # Extract all individual guides
         for _, row in logfc_df.iterrows():
-            if pd.notna(row['GUIDE_NAME1']):
-                unique_guides.add(row['GUIDE_NAME1'])
-            if pd.notna(row['GUIDE_NAME2']):
-                unique_guides.add(row['GUIDE_NAME2'])
+            if pd.notna(row['guide_name1']):
+                unique_guides.add(row['guide_name1'])
+            if pd.notna(row['guide_name2']):
+                unique_guides.add(row['guide_name2'])
 
         # Get existing pairs from data
         for _, row in logfc_df.iterrows():
-            if pd.notna(row['GUIDE_NAME1']) and pd.notna(row['GUIDE_NAME2']):
-                guide1, guide2 = row['GUIDE_NAME1'], row['GUIDE_NAME2']
+            if pd.notna(row['guide_name1']) and pd.notna(row['guide_name2']):
+                guide1, guide2 = row['guide_name1'], row['guide_name2']
                 if not (self.is_negative_control(guide1) and self.is_negative_control(guide2)):
                     guide_pairs.add((guide1, guide2))
 
@@ -209,30 +331,30 @@ generated quantities {
         return list(guide_pairs)
 
     def _add_guide_names(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Add GUIDE_NAME columns if missing."""
+        """Add guide_name columns if missing."""
         df = df.copy()
 
         # Create sequence to number mapping for each ORF
         seq_to_number = {}
-        reference_df = df[df['G'] == 0] if 'G' in df.columns and (df['G'] == 0).any() else df
+        reference_df = df[df['generations'] == 0] if 'generations' in df.columns and (df['generations'] == 0).any() else df
 
-        for orf in reference_df['ORF1'].unique():
+        for orf in reference_df['orf1'].unique():
             if pd.isna(orf):
                 continue
-            orf_seqs = reference_df[reference_df['ORF1'] == orf]['SEQ1'].unique()
+            orf_seqs = reference_df[reference_df['orf1'] == orf]['seq1'].unique()
             for i, seq in enumerate(sorted(orf_seqs), 1):
                 if pd.notna(seq):
                     seq_to_number[seq] = i
 
         # Apply guide numbering
-        df['GUIDE_NAME1'] = df.apply(
-            lambda row: f"{row['ORF1']}-{seq_to_number.get(row['SEQ1'], '1')}"
-            if pd.notna(row['ORF1']) and pd.notna(row['SEQ1']) else row['ORF1'], axis=1
+        df['guide_name1'] = df.apply(
+            lambda row: f"{row['orf1']}-{seq_to_number.get(row['seq1'], '1')}"
+            if pd.notna(row['orf1']) and pd.notna(row['seq1']) else row['orf1'], axis=1
         )
 
-        df['GUIDE_NAME2'] = df.apply(
-            lambda row: f"{row['ORF2']}-{seq_to_number.get(row['SEQ2'], '1')}"
-            if pd.notna(row['ORF2']) and pd.notna(row['SEQ2']) else row['ORF2'], axis=1
+        df['guide_name2'] = df.apply(
+            lambda row: f"{row['orf2']}-{seq_to_number.get(row['seq2'], '1')}"
+            if pd.notna(row['orf2']) and pd.notna(row['seq2']) else row['orf2'], axis=1
         )
 
         return df
@@ -251,23 +373,26 @@ generated quantities {
         """
         # Filter data for this guide pair
         pair_data = logfc_df[
-            ((logfc_df['GUIDE_NAME1'] == guide1) & (logfc_df['GUIDE_NAME2'] == guide2)) |
-            ((logfc_df['GUIDE_NAME1'] == guide2) & (logfc_df['GUIDE_NAME2'] == guide1))
+            ((logfc_df['guide_name1'] == guide1) & (logfc_df['guide_name2'] == guide2)) |
+            ((logfc_df['guide_name1'] == guide2) & (logfc_df['guide_name2'] == guide1))
         ].copy()
 
         if len(pair_data) < 3:  # Need minimum data points
             return None
 
         # Apply quality filters
-        if 'GOOD' in pair_data.columns:
-            pair_data = pair_data[pair_data['GOOD']].copy()
+        if 'good' in pair_data.columns:
+            pair_data = pair_data[pair_data['good']].copy()
 
         if len(pair_data) < 3:
             return None
 
-        # Prepare data for Stan
-        generations = pair_data['G'].values
-        logfc_values = pair_data['Y'].values
+        # Prepare data for Stan - always use log2fc values
+        generations = pair_data['generations'].values
+
+        # The Stan model fits log2fc trajectories over generations using a two-line model
+        # It will predict log2fc at generation 25 for this guide pair
+        logfc_values = pair_data['log2fc'].values
 
         # Create guide indices (all data is from same pair, so index=1 for all)
         guide_indices = np.ones(len(pair_data), dtype=int)
@@ -279,6 +404,14 @@ generated quantities {
             'x': generations.tolist(),
             'guides': guide_indices.tolist()
         }
+
+        # Store metadata for later use
+        if 'log2fc_nt1' in pair_data.columns and 'log2fc_nt2' in pair_data.columns:
+            model_data['metadata'] = {
+                'log2fc_nt1_mean': float(pair_data['log2fc_nt1'].mean()),
+                'log2fc_nt2_mean': float(pair_data['log2fc_nt2'].mean()),
+                'log2fc_mean': float(pair_data['log2fc'].mean())
+            }
 
         return model_data
 
@@ -336,7 +469,8 @@ generated quantities {
                                start_idx: int = 0, end_idx: int = -1,
                                force: bool = False) -> None:
         """
-        Step 1: Prepare model data JSON files for guide pairs.
+        Step 1: Prepare model data JSON files for all guide pairs.
+        Creates one JSON file per unique guide pair ID in the dataframe.
 
         Args:
             logfc_df_path: Path to log2FC dataframe
@@ -350,49 +484,37 @@ generated quantities {
         logger.info(f"Loading log2FC data from {logfc_df_path}")
         logfc_df = pd.read_csv(logfc_df_path, sep='\t', comment='#', low_memory=False)
 
-        # Get guide pairs
-        guide_pairs = self.get_guide_pairs_from_logfc_data(logfc_df)
+        # Get all unique guide pair IDs from the dataframe
+        # This includes both double and single mutants
+        unique_ids = logfc_df['ID'].unique()
 
         if end_idx == -1:
-            end_idx = len(guide_pairs)
+            end_idx = len(unique_ids)
 
-        guide_pairs = guide_pairs[start_idx:end_idx]
-        logger.info(f"Processing {len(guide_pairs)} guide pairs (indices {start_idx}:{end_idx})")
+        unique_ids_chunk = unique_ids[start_idx:end_idx]
+        logger.info(f"Processing {len(unique_ids_chunk)} guide pairs (indices {start_idx}:{end_idx})")
 
-        def process_guide_pair(pair):
-            guide1, guide2 = pair
+        # Prepare arguments for multiprocessing
+        print(f"\nPreparing to process {len(unique_ids_chunk)} guide pairs...")
+        args_list = [(guide_id, logfc_df, self.model_data_dir, force) for guide_id in unique_ids_chunk]
 
-            # Create output path
-            safe_guide1 = guide1.replace('/', '_').replace('\\', '_')
-            safe_guide2 = guide2.replace('/', '_').replace('\\', '_')
-            json_path = self.model_data_dir / f"model_data_{safe_guide1}_{safe_guide2}.json"
-
-            if json_path.exists() and not force:
-                return None
-
-            # Prepare model data
-            model_data = self.prepare_model_data_for_pair(logfc_df, guide1, guide2)
-            if model_data is None:
-                return None
-
-            # Save JSON
-            self.save_model_data_json(guide1, guide2, model_data, str(json_path))
-            return str(json_path)
-
-        # Process in parallel
+        # Process in parallel using module-level function
+        print(f"Processing in parallel with {self.workers} workers...")
         results = process_map(
-            process_guide_pair,
-            guide_pairs,
+            process_guide_id_for_model,
+            args_list,
             max_workers=self.workers,
-            desc="Preparing model data",
-            unit="pairs"
+            desc="Creating model JSON files",
+            unit="pairs",
+            chunksize=max(1, len(args_list) // (self.workers * 10))  # Dynamic chunk size
         )
 
         successful = [r for r in results if r is not None]
         logger.info(f"Successfully prepared model data for {len(successful)} guide pairs")
 
     def step2_run_stan_models(self, start_idx: int = 0, end_idx: int = -1,
-                            force: bool = False) -> None:
+                            force: bool = False, chains: int = 2,
+                            iter_sampling: int = 1000) -> None:
         """
         Step 2: Run Stan models on all prepared JSON files.
 
@@ -400,6 +522,8 @@ generated quantities {
             start_idx: Starting index for processing
             end_idx: Ending index for processing (-1 for all)
             force: Overwrite existing results
+            chains: Number of MCMC chains
+            iter_sampling: Number of sampling iterations per chain
         """
         logger.info("Step 2: Running Stan models...")
 
@@ -407,8 +531,8 @@ generated quantities {
             logger.error("Stan model not available. Install CmdStanPy and Stan.")
             return
 
-        # Get JSON files
-        json_files = list(self.model_data_dir.glob("model_data_*.json"))
+        # Get JSON files from all subdirectories
+        json_files = list(self.model_data_dir.rglob("*.json"))
         json_files.sort()
 
         if end_idx == -1:
@@ -417,27 +541,138 @@ generated quantities {
         json_files = json_files[start_idx:end_idx]
         logger.info(f"Processing {len(json_files)} model data files")
 
-        def run_model_on_file(json_path):
-            # Create output path
-            output_path = self.samples_dir / (json_path.stem.replace("model_data_", "samples_") + ".tsv")
+        # First, filter to files that need processing
+        print("\nChecking which files need processing...")
+        files_to_process = []
+        for json_path in tqdm(json_files, desc="Checking existing samples", unit="files"):
+            # Determine output path with same folder structure
+            output_path = str(json_path).replace('/model_data/', '/samples/').replace('.json', '_samples.tsv')
+            if not os.path.exists(output_path) or force:
+                files_to_process.append(json_path)
 
-            if output_path.exists() and not force:
-                return True
+        logger.info(f"Found {len(files_to_process)} files to process ({len(json_files) - len(files_to_process)} already done)")
 
-            return self.run_stan_model_on_pair(str(json_path), str(output_path))
+        if len(files_to_process) == 0:
+            logger.info("All models already run, nothing to do")
+            return
 
-        # Process in parallel (but limit workers for Stan to avoid memory issues)
-        stan_workers = min(self.workers, 4)  # Stan can be memory-intensive
+        # Prepare arguments for parallel processing
+        # Pass the compiled model as part of the arguments
+        args_list = [(self.stan_model, str(json_path), chains, iter_sampling)
+                     for json_path in files_to_process]
+
+        # Process in parallel with progress bar
+        # You can limit workers if memory is an issue, but use all available by default
+        stan_workers = self.workers
+        print(f"\nRunning {len(args_list)} Stan models in parallel with {stan_workers} workers...")
+        print(f"This may take a while. Each model runs MCMC sampling...")
+
         results = process_map(
-            run_model_on_file,
-            json_files,
+            run_stan_model_for_pair,
+            args_list,
             max_workers=stan_workers,
-            desc="Running Stan models",
-            unit="models"
+            desc="Fitting Stan models",
+            unit="models",
+            chunksize=max(1, len(args_list) // (stan_workers * 10))
         )
 
         successful = sum(results)
         logger.info(f"Successfully ran Stan models on {successful} guide pairs")
+
+    def calculate_y25_delta_scores(self, results_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Calculate Y25_delta (genetic interaction scores) from Y25 predictions.
+
+        Y25_delta = Y25(double mutant) - [Y25(single mutant 1) + Y25(single mutant 2)]
+
+        This is the true genetic interaction score.
+
+        Args:
+            results_df: DataFrame with Y25 predictions for all guide pairs
+
+        Returns:
+            DataFrame with Y25_delta scores added
+        """
+        # Build lookup dictionaries for single mutants.
+        # A targeting guide (orf:gene, seq) appears in MANY single-mutant
+        # constructs — paired with different non-targeting (Negative) guides,
+        # and in either position — so we ACCUMULATE its Y25 across all of them
+        # and average, rather than keeping one arbitrary construct. (Overwriting
+        # a dict keyed on (orf, seq) would keep only whichever construct was
+        # iterated last — non-deterministic filesystem order — and discard the
+        # other replicate measurements.)
+        double_mutants = []
+        single_mutants_accum = {}  # {(gene, seq): [y25_values]}
+
+        print("Identifying double and single mutants...")
+        for _, row in tqdm(results_df.iterrows(), total=len(results_df), desc="Classifying mutants", unit="pairs", leave=False):
+            guide_id = row['guide_id']
+            parts = guide_id.split('_')
+
+            if len(parts) == 4:  # Format: ORF1:gene1_SEQ1_ORF2:gene2_SEQ2
+                orf1_gene1 = parts[0]
+                seq1 = parts[1]
+                orf2_gene2 = parts[2]
+                seq2 = parts[3]
+
+                # Check if it's a single or double mutant
+                if 'Negative' in orf1_gene1:
+                    # Single mutant: Negative_X_ORF2:gene2_SEQ2
+                    single_mutants_accum.setdefault((orf2_gene2, seq2), []).append(row['y25_mean'])
+                elif 'Negative' in orf2_gene2:
+                    # Single mutant: ORF1:gene1_SEQ1_Negative_X
+                    single_mutants_accum.setdefault((orf1_gene1, seq1), []).append(row['y25_mean'])
+                else:
+                    # Double mutant
+                    double_mutants.append(row)
+
+        # Reduce each guide's single-mutant Y25 measurements to their mean.
+        single_mutants_by_gene = {k: float(np.mean(v)) for k, v in single_mutants_accum.items()}
+
+        logger.info(f"Found {len(double_mutants)} double mutants and {len(single_mutants_by_gene)} unique single mutants")
+
+        # Calculate Y25_delta for each double mutant
+        y25_delta_results = []
+
+        print(f"Calculating Y25_delta for {len(double_mutants)} double mutants...")
+        for row in tqdm(double_mutants, desc="Computing Y25_delta", unit="pairs", leave=False):
+            guide_id = row['guide_id']
+            parts = guide_id.split('_')
+
+            # Extract components
+            orf1_gene1 = parts[0]
+            seq1 = parts[1]
+            orf2_gene2 = parts[2]
+            seq2 = parts[3]
+
+            # Lookup single mutants efficiently
+            y25_double = row['y25_mean']
+            y25_single1 = single_mutants_by_gene.get((orf1_gene1, seq1), np.nan)
+            y25_single2 = single_mutants_by_gene.get((orf2_gene2, seq2), np.nan)
+
+            if not np.isnan(y25_single1) and not np.isnan(y25_single2):
+                # Calculate Y25_delta (the genetic interaction score)
+                y25_delta = y25_double - (y25_single1 + y25_single2)
+
+                # Calculate expected (sum of single mutants)
+                y25_expected = y25_single1 + y25_single2
+
+                y25_delta_results.append({
+                    'guide_pair': guide_id,
+                    'guide1': f"{orf1_gene1}_{seq1}",
+                    'guide2': f"{orf2_gene2}_{seq2}",
+                    'y25_double': y25_double,
+                    'y25_single1': y25_single1,
+                    'y25_single2': y25_single2,
+                    'y25_expected': y25_expected,  # Sum of single mutants
+                    'y25_delta': y25_delta,  # This is the uncorrected GI score
+                    'y25_std': row['y25_std'],
+                    'y25_q025': row['y25_q025'],
+                    'y25_q975': row['y25_q975']
+                })
+
+        logger.info(f"Calculated Y25_delta for {len(y25_delta_results)} double mutant pairs")
+        return pd.DataFrame(y25_delta_results)
 
     def step3_calculate_gi_scores(self, output_path: str = None) -> pd.DataFrame:
         """
@@ -451,8 +686,8 @@ generated quantities {
         """
         logger.info("Step 3: Calculating genetic interaction scores...")
 
-        # Get all sample files
-        sample_files = list(self.samples_dir.glob("samples_*.tsv"))
+        # Get all sample files from all subdirectories
+        sample_files = list(self.samples_dir.rglob("*_samples.tsv"))
 
         if len(sample_files) == 0:
             logger.error("No sample files found. Run steps 1 and 2 first.")
@@ -462,16 +697,19 @@ generated quantities {
 
         results = []
 
-        for sample_file in tqdm(sample_files, desc="Calculating GI scores"):
+        print(f"\nExtracting Y25 predictions from {len(sample_files)} Stan samples...")
+        for sample_file in tqdm(sample_files, desc="Extracting Y25 predictions", unit="files"):
             try:
-                # Parse guide names from filename
-                basename = sample_file.stem.replace("samples_", "")
-                guide_parts = basename.split("_")
-                if len(guide_parts) >= 2:
-                    guide1 = "_".join(guide_parts[:-1])
-                    guide2 = guide_parts[-1]
+                # Load corresponding metadata to get the original guide ID
+                # The TSV file should be in the same relative path but in model_data
+                metadata_path = str(sample_file).replace('/samples/', '/model_data/').replace('_samples.tsv', '.tsv')
+
+                if os.path.exists(metadata_path):
+                    metadata_df = pd.read_csv(metadata_path, sep='\t', nrows=1)
+                    guide_id = metadata_df['guide_id'].iloc[0] if 'guide_id' in metadata_df.columns else metadata_df['ID'].iloc[0]
                 else:
-                    continue
+                    # Try to reconstruct guide ID from filename
+                    guide_id = sample_file.stem.replace('_samples', '')
 
                 # Load samples
                 samples_df = pd.read_csv(sample_file, sep='\t')
@@ -483,21 +721,17 @@ generated quantities {
                     y25_q025 = samples_df['Y25'].quantile(0.025)
                     y25_q975 = samples_df['Y25'].quantile(0.975)
 
-                    # For GI score, we need to compare the double mutant prediction
-                    # with the sum of single mutant predictions
-                    # This requires loading single mutant data (guide + negative controls)
-                    gi_score = y25_mean  # Placeholder - would need single mutant data for full calculation
+                    # Y25 is the predicted log2fc at generation 25 for this guide pair
+                    # This is NOT the final GI score - that requires comparing with single mutants
 
                     results.append({
-                        'guide1': guide1,
-                        'guide2': guide2,
-                        'guide_pair': f"{guide1}_{guide2}",
-                        'y25_mean': y25_mean,
-                        'y25_std': y25_std,
-                        'y25_q025': y25_q025,
-                        'y25_q975': y25_q975,
-                        'gi_score': gi_score,
-                        'n_samples': len(samples_df)
+                        'guide_id': guide_id,
+                        'y25_mean': y25_mean,   # Predicted log2fc at generation 25
+                        'y25_std': y25_std,     # Standard deviation
+                        'y25_q025': y25_q025,   # 2.5% quantile (lower CI bound)
+                        'y25_q975': y25_q975,   # 97.5% quantile (upper CI bound)
+                        'n_samples': len(samples_df),
+                        'sample_file': str(sample_file)  # Keep track of source file
                     })
 
             except Exception as e:
@@ -508,15 +742,223 @@ generated quantities {
         results_df = pd.DataFrame(results)
 
         if len(results_df) > 0:
-            logger.info(f"Calculated GI scores for {len(results_df)} guide pairs")
+            logger.info(f"Extracted Y25 predictions for {len(results_df)} guide pairs")
 
-            if output_path:
-                results_df.to_csv(output_path, sep='\t', index=False)
-                logger.info(f"Saved results to {output_path}")
+            # Calculate Y25_delta (GI scores) by comparing double and single mutants
+            print(f"\nCalculating Y25_delta scores for {len(results_df)} guide pairs...")
+            gi_scores_df = self.calculate_y25_delta_scores(results_df)
+
+            if output_path and len(gi_scores_df) > 0:
+                gi_scores_df.to_csv(output_path, sep='\t', index=False)
+                logger.info(f"Saved GI scores to {output_path}")
+
+                # Print summary statistics
+                print(f"\nGenetic Interaction Score Summary:")
+                print(f"Total guide pairs with GI scores: {len(gi_scores_df)}")
+                print(f"Mean Y25_delta (GI score): {gi_scores_df['y25_delta'].mean():.3f}")
+                print(f"Std Y25_delta: {gi_scores_df['y25_delta'].std():.3f}")
+                print(f"Min Y25_delta: {gi_scores_df['y25_delta'].min():.3f}")
+                print(f"Max Y25_delta: {gi_scores_df['y25_delta'].max():.3f}")
+
+                return gi_scores_df
         else:
             logger.error("No results generated")
 
         return results_df
+
+    def apply_gam_correction_python(self, gi_scores_df: pd.DataFrame, n_splines: int = 20) -> pd.DataFrame:
+        """
+        Apply GAM correction to Y25_delta scores using Python (pygam).
+
+        The GAM models the relationship between expected fitness (sum of singles)
+        and the deviation from expectation (Y25_delta).
+
+        Args:
+            gi_scores_df: DataFrame with Y25_delta scores
+            n_splines: Number of splines for GAM (default: 20)
+
+        Returns:
+            DataFrame with corrected Y25_delta scores
+        """
+        if not HAS_PYGAM:
+            logger.warning("pygam not available. Install with: pip install pygam")
+            logger.info("Returning uncorrected scores")
+            return gi_scores_df
+
+        logger.info("Applying GAM correction using pygam...")
+
+        df = gi_scores_df.copy()
+
+        # Remove any rows with NaN values
+        df_clean = df.dropna(subset=['y25_expected', 'y25_delta'])
+
+        if len(df_clean) < 10:
+            logger.warning("Not enough data points for GAM correction")
+            return gi_scores_df
+
+        try:
+            # Fit GAM: y25_delta ~ s(y25_expected)
+            X = df_clean[['y25_expected']].values
+            y = df_clean['y25_delta'].values
+
+            # Create and fit GAM model
+            gam = GAM(s(0, n_splines=n_splines))
+            gam.gridsearch(X, y, progress=False)
+
+            # Get predictions
+            y_pred = gam.predict(X)
+
+            # Calculate corrected Y25_delta (residuals)
+            y25_delta_corrected = y - y_pred
+
+            # Add corrected values back to dataframe
+            df.loc[df_clean.index, 'y25_delta_corrected'] = y25_delta_corrected
+            df.loc[df_clean.index, 'gam_prediction'] = y_pred
+
+            # Calculate GAM statistics
+            gam_r2 = gam.statistics_['pseudo_r2']['explained_deviance']
+            logger.info(f"GAM correction applied. Pseudo R²: {gam_r2:.4f}")
+
+        except Exception as e:
+            logger.error(f"GAM correction failed: {e}")
+            logger.info("Returning uncorrected scores")
+            return gi_scores_df
+
+        return df
+
+    def apply_gam_correction_r(self, gi_scores_df: pd.DataFrame,
+                              r_script_path: str = None,
+                              sp: float = None, k: int = 20) -> pd.DataFrame:
+        """
+        Apply GAM correction using R script (requires R and mgcv package).
+
+        Args:
+            gi_scores_df: DataFrame with Y25_delta scores
+            r_script_path: Path to gam_correction_standalone.R script
+            sp: Smoothing parameter (None for automatic)
+            k: Basis dimension (default: 20)
+
+        Returns:
+            DataFrame with corrected Y25_delta scores
+        """
+        import tempfile
+        import subprocess
+
+        logger.info("Applying GAM correction using R/mgcv...")
+
+        # If no R script path provided, check for it in the current directory
+        if r_script_path is None:
+            r_script_path = "gam_correction_standalone.R"
+
+        if not os.path.exists(r_script_path):
+            logger.warning(f"R script not found at {r_script_path}")
+            logger.info("Returning uncorrected scores")
+            return gi_scores_df
+
+        # Prepare data for R
+        df_for_r = gi_scores_df[['guide_pair', 'y25_expected', 'y25_double']].copy()
+        df_for_r.columns = ['guide_pair', 'expected', 'y25']  # R script expects these column names
+
+        # Create temporary files
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.tsv', delete=False) as input_file:
+            df_for_r.to_csv(input_file.name, sep='\t', index=False)
+            input_path = input_file.name
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.tsv', delete=False) as output_file:
+            output_path = output_file.name
+
+        try:
+            # Prepare command
+            cmd = ["Rscript", r_script_path, input_path, output_path]
+            if sp is not None:
+                cmd.append(str(sp))
+            else:
+                cmd.append("NULL")
+            cmd.append(str(k))
+            cmd.append("ML")
+
+            # Run R script
+            result = subprocess.run(cmd, capture_output=True, text=True)
+
+            if result.returncode != 0:
+                logger.error(f"R script failed: {result.stderr}")
+                return gi_scores_df
+
+            # Read corrected data
+            corrected_df = pd.read_csv(output_path, sep='\t')
+
+            # Merge corrected values back
+            gi_scores_df = gi_scores_df.merge(
+                corrected_df[['guide_pair', 'y_corrected']],
+                on='guide_pair',
+                how='left'
+            )
+            gi_scores_df.rename(columns={'y_corrected': 'y25_delta_corrected'}, inplace=True)
+
+            logger.info("GAM correction applied successfully using R")
+
+        except Exception as e:
+            logger.error(f"GAM correction failed: {e}")
+            return gi_scores_df
+
+        finally:
+            # Clean up temporary files
+            for path in [input_path, output_path]:
+                if os.path.exists(path):
+                    os.remove(path)
+
+        return gi_scores_df
+
+    def step4_apply_gam_correction(self, gi_scores_path: str, output_path: str = None,
+                                  method: str = 'python', **kwargs) -> pd.DataFrame:
+        """
+        Step 4: Apply GAM correction to genetic interaction scores.
+
+        Args:
+            gi_scores_path: Path to GI scores from step 3
+            output_path: Path to save corrected scores
+            method: 'python' (uses pygam) or 'r' (uses R script)
+            **kwargs: Additional arguments for GAM correction
+
+        Returns:
+            DataFrame with corrected GI scores
+        """
+        logger.info("Step 4: Applying GAM correction...")
+
+        # Load GI scores
+        gi_scores_df = pd.read_csv(gi_scores_path, sep='\t')
+
+        # Apply GAM correction
+        if method == 'python':
+            corrected_df = self.apply_gam_correction_python(
+                gi_scores_df,
+                n_splines=kwargs.get('n_splines', 20)
+            )
+        elif method == 'r':
+            corrected_df = self.apply_gam_correction_r(
+                gi_scores_df,
+                r_script_path=kwargs.get('r_script_path'),
+                sp=kwargs.get('sp'),
+                k=kwargs.get('k', 20)
+            )
+        else:
+            logger.error(f"Unknown GAM correction method: {method}")
+            return gi_scores_df
+
+        # Save corrected scores
+        if output_path:
+            corrected_df.to_csv(output_path, sep='\t', index=False)
+            logger.info(f"Corrected GI scores saved to {output_path}")
+
+        # Print summary
+        if 'y25_delta_corrected' in corrected_df.columns:
+            print(f"\nCorrected GI Score Summary:")
+            print(f"Mean Y25_delta (corrected): {corrected_df['y25_delta_corrected'].mean():.3f}")
+            print(f"Std Y25_delta (corrected): {corrected_df['y25_delta_corrected'].std():.3f}")
+            print(f"Min Y25_delta (corrected): {corrected_df['y25_delta_corrected'].min():.3f}")
+            print(f"Max Y25_delta (corrected): {corrected_df['y25_delta_corrected'].max():.3f}")
+
+        return corrected_df
 
 
 def main():
@@ -524,16 +966,23 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="Genetic interaction scoring pipeline")
-    parser.add_argument("--logfc_data", required=True, help="Path to log2FC dataframe")
+    parser.add_argument("--logfc_data", help="Path to log2FC dataframe (required for step 1)")
     parser.add_argument("--output_dir", default="./gi_results", help="Output directory")
-    parser.add_argument("--step", type=int, choices=[1, 2, 3], help="Run specific step only")
+    parser.add_argument("--step", type=int, choices=[1, 2, 3, 4], help="Run specific step only")
     parser.add_argument("--start", type=int, default=0, help="Start index for chunked processing")
     parser.add_argument("--end", type=int, default=-1, help="End index for chunked processing")
     parser.add_argument("--workers", type=int, default=None, help="Number of parallel workers")
     parser.add_argument("--force", action="store_true", help="Overwrite existing files")
     parser.add_argument("--stan_model", help="Path to custom Stan model file")
+    parser.add_argument("--gam_method", choices=['python', 'r'], default='python',
+                       help="GAM correction method: 'python' (pygam) or 'r' (R/mgcv)")
+    parser.add_argument("--r_script", help="Path to GAM correction R script (default: gam_correction_standalone.R)")
 
     args = parser.parse_args()
+
+    # Validate that logfc_data is provided when needed
+    if args.step in [None, 1] and not args.logfc_data:
+        parser.error("--logfc_data is required for step 1 or when running all steps")
 
     # Initialize GI scoring pipeline
     gi_scorer = GIScoring(
@@ -561,6 +1010,19 @@ def main():
     if args.step is None or args.step == 3:
         output_path = os.path.join(args.output_dir, "gi_scores.tsv")
         gi_scorer.step3_calculate_gi_scores(output_path)
+
+    if args.step == 4:
+        # GAM correction step (optional)
+        gi_scores_path = os.path.join(args.output_dir, "gi_scores.tsv")
+        corrected_path = os.path.join(args.output_dir, "gi_scores_corrected.tsv")
+
+        # Use specified GAM correction method
+        gi_scorer.step4_apply_gam_correction(
+            gi_scores_path,
+            output_path=corrected_path,
+            method=args.gam_method,
+            r_script_path=args.r_script
+        )
 
 
 if __name__ == "__main__":
