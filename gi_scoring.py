@@ -593,16 +593,19 @@ generated quantities {
         Returns:
             DataFrame with Y25_delta scores added
         """
-        # Build lookup dictionaries for single mutants.
-        # A targeting guide (orf:gene, seq) appears in MANY single-mutant
-        # constructs — paired with different non-targeting (Negative) guides,
-        # and in either position — so we ACCUMULATE its Y25 across all of them
-        # and average, rather than keeping one arbitrary construct. (Overwriting
-        # a dict keyed on (orf, seq) would keep only whichever construct was
-        # iterated last — non-deterministic filesystem order — and discard the
-        # other replicate measurements.)
+        # Build lookup dictionaries for single mutants, POSITION-MATCHED to the
+        # double (matching the paper convention in
+        # indiv_tools.get_all_possible_guide_y25_label_combinations): for a double
+        # "A(left)_B(right)", gene A's single is A on the LEFT (A_Negative) and
+        # gene B's single is B on the RIGHT (Negative_B) — each gene's single is
+        # taken in the same construct position it occupies in the double.
+        #
+        # A targeting guide appears in many single constructs per position
+        # (different non-targeting partners), so we ACCUMULATE its Y25 across all
+        # of them and average — deterministic and using every replicate, rather
+        # than keeping one arbitrary construct.
         double_mutants = []
-        single_mutants_accum = {}  # {(gene, seq): [y25_values]}
+        single_mutants_accum = {}  # {(gene, seq, side): [y25_values]}; side in {'left','right'}
 
         print("Identifying double and single mutants...")
         for _, row in tqdm(results_df.iterrows(), total=len(results_df), desc="Classifying mutants", unit="pairs", leave=False):
@@ -615,18 +618,18 @@ generated quantities {
                 orf2_gene2 = parts[2]
                 seq2 = parts[3]
 
-                # Check if it's a single or double mutant
+                # Classify, tracking which side the targeting guide sits on.
                 if 'Negative' in orf1_gene1:
-                    # Single mutant: Negative_X_ORF2:gene2_SEQ2
-                    single_mutants_accum.setdefault((orf2_gene2, seq2), []).append(row['y25_mean'])
+                    # Negative_X_ORF2:gene2_SEQ2 -> targeting guide is on the RIGHT
+                    single_mutants_accum.setdefault((orf2_gene2, seq2, 'right'), []).append(row['y25_mean'])
                 elif 'Negative' in orf2_gene2:
-                    # Single mutant: ORF1:gene1_SEQ1_Negative_X
-                    single_mutants_accum.setdefault((orf1_gene1, seq1), []).append(row['y25_mean'])
+                    # ORF1:gene1_SEQ1_Negative_X -> targeting guide is on the LEFT
+                    single_mutants_accum.setdefault((orf1_gene1, seq1, 'left'), []).append(row['y25_mean'])
                 else:
                     # Double mutant
                     double_mutants.append(row)
 
-        # Reduce each guide's single-mutant Y25 measurements to their mean.
+        # Reduce each guide's per-position single-mutant Y25 measurements to their mean.
         single_mutants_by_gene = {k: float(np.mean(v)) for k, v in single_mutants_accum.items()}
 
         logger.info(f"Found {len(double_mutants)} double mutants and {len(single_mutants_by_gene)} unique single mutants")
@@ -645,10 +648,11 @@ generated quantities {
             orf2_gene2 = parts[2]
             seq2 = parts[3]
 
-            # Lookup single mutants efficiently
+            # Look up each gene's single mutant in the SAME position it occupies
+            # in this double: left gene -> its LEFT single, right gene -> its RIGHT.
             y25_double = row['y25_mean']
-            y25_single1 = single_mutants_by_gene.get((orf1_gene1, seq1), np.nan)
-            y25_single2 = single_mutants_by_gene.get((orf2_gene2, seq2), np.nan)
+            y25_single1 = single_mutants_by_gene.get((orf1_gene1, seq1, 'left'), np.nan)
+            y25_single2 = single_mutants_by_gene.get((orf2_gene2, seq2, 'right'), np.nan)
 
             if not np.isnan(y25_single1) and not np.isnan(y25_single2):
                 # Calculate Y25_delta (the genetic interaction score)
