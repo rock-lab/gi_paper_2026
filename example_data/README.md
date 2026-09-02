@@ -116,6 +116,40 @@ toy gene or a Negative control. Count tables have an `Id` column plus one or mor
 integer count columns (`lane_x`, `lane_y`, `lane`, ...); the exp1 `P0` files also
 carried a stray `test_counts_*` column, which is dropped during subsetting.
 
+## Exclusion rules & expected row counts
+
+`make_example_data.py` builds every shipped file by row-filtering the real HPC
+sources with these rules (`SET` = the 15 Set A ORF ids; `ALLOWED` = `SET` +
+`Negative`):
+
+- **Per-screen GI-input tables** (`gi_input/result_summary_long_df_exp{1,2}_toy.tsv`)
+  and the **golden merged table** (`expected/merged_quad_me_trunc_halfsmeared_toy.tsv`):
+  keep a row iff **both** `orf1` and `orf2` are in `SET`. →
+  **120 gene pairs** (105 unordered pairs + 15 self-pairs).
+- **Count tables** (`counts/exp{1,2}/*`): keep a construct iff **both** sides
+  are in `ALLOWED` (a Set A gene or a Negative control); drop any stray
+  `test_counts_*` column. → **1600 constructs** per table =
+  **900** gene×gene doubles + **600** single-mutant (gene × NT) controls +
+  **100** NT × NT.
+- **Guide-name map** (`guide_name_map.tsv`): keep rows whose `orf_id` is in
+  `ALLOWED`. → **40 guides**.
+
+> The `gi_input/*_toy.tsv` tables are **pre-derived paper checkpoints** — the
+> exact HPC per-screen inputs, carrying the real `sd_delta_prime_median` and
+> `correlation` columns — **not** the output of the repo's simplified
+> `aggregate_guide_pairs.py`. The full chain's own aggregation diverges from
+> them (see *Scope & honesty* in the top-level README); `FROM_GOLDEN=1` starts
+> the joint model from these checkpoints for a faithful reproduction.
+
+Downstream, when you run the **full chain** (`bash run_example.sh`):
+- log2FC keeps one row per construct per timepoint: exp1 = 1600 × 9 = **14,400**,
+  exp2 = 1600 × 11 = **17,600**.
+- per-guide-pair scoring keeps the **≈900** gene×gene doubles per screen (the 600
+  single-mutant controls supply the position-matched baselines; NT × NT is
+  dropped; a few doubles may drop for missing baselines/QC).
+- aggregation collapses the doubles to the **120** gene pairs, and the joint
+  merge is a **120-row, 20-column** table.
+
 ## Passage / generation mapping
 
 **exp1 (100 ng/mL ATc)** — passages sampled over ~32 generations:
@@ -124,14 +158,17 @@ carried a stray `test_counts_*` column, which is dropped during subsetting.
 |---------|----|------|-----|------|------|------|------|------|------|
 | gens    | 0  | 2.6  | 5.4 | 8.1  | 10.8 | 16.2 | 21.6 | 27.1 | 32.5 |
 
-**exp2 (500 ng/mL ATc)** — sampled at `G0, G2, ..., G20`.
+**exp2 (500 ng/mL ATc)** — sampled every 2 generations at `G0, G2, ..., G20`
+(11 timepoints):
 
-> **Note (exp2 generations):** the `generations` column in
-> `experiment_metadata_exp2.csv` is taken from the `G{n}` timepoint label in each
-> file name (i.e. `G8` → 8 generations), because the source records these
-> timepoints only as `G{n}` labels rather than as an explicit generations field.
-> This nominal mapping is what the example uses; treat it as an approximate
-> generation count rather than an exact one.
+| timepoint | G0 | G2 | G4 | G6 | G8 | G10 | G12 | G14 | G16 | G18 | G20 |
+|-----------|----|----|----|----|----|-----|-----|-----|-----|-----|-----|
+| gens      | 0  | 2  | 4  | 6  | 8  | 10  | 12  | 14  | 16  | 18  | 20  |
+
+Here the `G{n}` label **is** the generation count: the `generations` column in
+`experiment_metadata_exp2.csv` is exactly `n` (e.g. `G8` → 8), matching the
+every-2-generations sampling design. (Unlike exp1, whose passage labels above
+are *not* generation counts.)
 
 ## Provenance
 

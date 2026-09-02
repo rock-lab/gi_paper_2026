@@ -67,7 +67,8 @@ Project the per-pair probabilities onto gene x gene matrices: a signed probabili
 
 ## Dependencies
 
-Python dependencies are pinned in [`requirements.txt`](requirements.txt):
+Python dependencies are listed in [`requirements.txt`](requirements.txt) as
+minimum-version bounds (not exact pins):
 
 ```bash
 pip install -r requirements.txt
@@ -148,20 +149,23 @@ python gi_scoring.py --logfc_data logfc_results.txt --output_dir ./gi_analysis -
 For large datasets (>2M guide pairs), process in chunks:
 
 ```bash
+# All chunked commands MUST share the same --output_dir so that later steps
+# read the model_data/ and samples/ the earlier chunks wrote there.
+#
 # Step 1: Prepare model data in chunks
-python gi_scoring.py --logfc_data logfc_results.txt --step 1 --start 0 --end 500000 --workers 8
-python gi_scoring.py --logfc_data logfc_results.txt --step 1 --start 500000 --end 1000000 --workers 8
+python gi_scoring.py --logfc_data logfc_results.txt --output_dir ./gi_analysis --step 1 --start 0 --end 500000 --workers 8
+python gi_scoring.py --logfc_data logfc_results.txt --output_dir ./gi_analysis --step 1 --start 500000 --end 1000000 --workers 8
 # ... continue for all chunks
 
 # Step 2: Run Bayesian models (memory-intensive, use fewer workers)
-python gi_scoring.py --step 2 --start 0 --end 500000 --workers 4
-python gi_scoring.py --step 2 --start 500000 --end 1000000 --workers 4
+python gi_scoring.py --output_dir ./gi_analysis --step 2 --start 0 --end 500000 --workers 4
+python gi_scoring.py --output_dir ./gi_analysis --step 2 --start 500000 --end 1000000 --workers 4
 
 # Step 3: Calculate Y25_delta (uncorrected GI scores)
-python gi_scoring.py --step 3 --output_dir ./gi_analysis
+python gi_scoring.py --output_dir ./gi_analysis --step 3
 
 # Step 4 (Optional): Apply GAM correction to GI scores
-python gi_scoring.py --step 4 --output_dir ./gi_analysis
+python gi_scoring.py --output_dir ./gi_analysis --step 4
 ```
 
 The GAM correction (Step 4) adjusts for systematic biases in the genetic interaction scores based on the expected fitness values. This step can use either Python (pygam) or R (mgcv) for the correction.
@@ -199,8 +203,12 @@ unnamed index column may be present):
 - `correlation` - mean guide-guide correlation for the pair (carried through)
 
 The model writes a per-pair `prob_interaction_median` (posterior probability
-that the pair is an interaction), which is the column the joint model and the
-merge step consume.
+that the pair is an interaction). **This per-screen probability is not an input
+to the joint Stan fit** — the joint model is fit on the raw per-screen GI scores
+(`delta_prime_median`) with their SEs. `prob_interaction_median` is carried
+through the merge step only, appearing in the final table as
+`prob_interaction_median_exp1` / `prob_interaction_median_exp2` for reference
+alongside the joint model's own class probabilities.
 
 > A measurement-error variant, `univariate_normal_uniform_mix_me.stan` — the 1-D
 > analog of the joint model, which additionally uses each pair's SE to inflate
@@ -295,28 +303,65 @@ guide-pair GI scores aggregated to the gene-pair `result_summary_long_df` inputs
 (`example_data/gi_input/`), and golden expected outputs (`example_data/expected/`).
 
 `run_example.sh` is the single, end-to-end **runbook** — a shell script that
-calls each discrete step script in order. For **each** screen it runs counts →
-log2FC → the per-guide-pair two-line model → GAM correction →
-guide-pair→gene-pair aggregation → the per-screen mixture (the **single-screen**
-results); then it runs the **joint** cross-screen model, merges to the 20-column
-table, and builds the gene × gene matrices. To run your **own** data, copy the
-script and edit the CONFIG block at the top (point each screen at your metadata
-CSV, set the output names) — every step is a plain script you can also run by hand.
+calls each discrete step script in order. There are **two supported ways to run
+it**:
+
+**1. Fast joint-stage verification (reproduces the paper's joint model).**
+Starts from the shipped **golden** per-screen gene-pair tables and runs only the
+joint half (one joint Stan fit over the 120 pairs, then merge + matrices). Use
+this to verify the joint model reproduces the published result.
 
 ```bash
-# maintainer-only: (re)build the example data from the raw sources
-python make_example_data.py
-
-# full example: both screens from counts, then the joint analysis
-bash run_example.sh
-
-# fast path: skip the heavy per-guide-pair fitting and run only the joint half
-# from the shipped golden gene-pair tables (one joint fit over ~120 pairs)
 FROM_GOLDEN=1 bash run_example.sh
 ```
 
-The final step validates the shipped example (known Set A hits vs the golden
-tables via `check_example.py`); delete that block when adapting the runbook.
+**2. Complete counts-to-final-output run (runs end-to-end; does *not* match the
+paper).** For each screen: counts → log2FC → per-guide-pair two-line model → GAM
+correction → guide-pair→gene-pair aggregation → per-screen mixture; then the
+joint model, merge, and matrices. This exercises every script, but the public
+guide→gene-pair aggregation is a **simplified stand-in** for the HPC procedure,
+so the numbers are for *running the pipeline*, not for matching the paper (see
+**Scope & honesty** below).
+
+```bash
+bash run_example.sh
+```
+
+**Input contract.** `bash run_example.sh` reads, per screen, the pooled count
+tables in `example_data/counts/exp{1,2}/` and the metadata CSV
+`example_data/experiment_metadata_exp{1,2}.csv`. `FROM_GOLDEN=1` instead reads
+the golden per-screen tables `example_data/gi_input/result_summary_long_df_exp{1,2}_toy.tsv`.
+
+**Output contract.** Both write to `example_out/` (override with `OUTDIR=...`):
+per-screen `single_screen_exp{1,2}.tsv`, the 20-column joint table
+`example_out/merged.tsv`, and the gene × gene `signed_prob_matrix.tsv` /
+`hit_matrix_thr050.tsv`.
+
+**Expected counts (the shipped example).** 15 genes → **120 canonical gene
+pairs** (105 unordered + 15 self). Each per-screen count table has **1600
+constructs** = 900 gene×gene doubles + 600 single-mutant (gene × NT) controls +
+100 NT × NT. log2FC has one row per construct per timepoint (exp1: 1600 × 9
+timepoints = 14,400; exp2: 1600 × 11 = 17,600). Per-guide-pair scoring yields
+≈900 gene×gene doubles per screen (a few may drop for missing baselines);
+aggregation collapses these to the **120** gene pairs, and the joint merge is a
+**120-row, 20-column** table.
+
+The runbook's final step validates the shipped example (known Set A hits vs the
+golden tables via `check_example.py`); delete that block when adapting the
+runbook for your own data. To rebuild the example from the raw HPC sources
+(maintainer-only), see `python make_example_data.py`.
+
+**Troubleshooting.**
+- `FileNotFoundError: Stan model not found` / CmdStan errors → build the
+  toolchain once: `python -c "import cmdstanpy; cmdstanpy.install_cmdstan()"`.
+- `Missing column: sd_delta_prime_median` → the per-screen input lacks the GI
+  SE column; use the shipped `gi_input/*_toy.tsv` (they carry it) or run the
+  full chain, which produces it.
+- `ValueError: Degenerate GI-score support: min_y == max_y` → too few distinct
+  (winsorized) GI scores to fit the mixture; check the input has more than one
+  gene pair with a finite score.
+- Empty / all-NaN matrices → confirm `example_out/merged.tsv` has 120 rows
+  before the matrix steps (an upstream step produced no pairs).
 
 ## Scope & honesty
 
@@ -366,9 +411,10 @@ model** on a small real example dataset. A few caveats stated plainly:
     `orf1`, `orf2`, `seq1`, `seq2`, `guide_name`, `guide_name1`, `guide_name2`
 
 ### Step 3 Output (Genetic Interaction Scoring)
+Paths below are relative to `--output_dir`.
 - `model_data/`: JSON files for each guide pair (Stan model input)
 - `samples/`: Stan model posterior samples for each guide pair
-- `results/gi_scores.tsv`: Genetic interaction scores with columns:
+- `gi_scores.tsv` (written at the `--output_dir` root): Genetic interaction scores with columns:
   - `guide_pair`: Combined guide pair identifier
   - `guide1`, `guide2`: Individual guide names
   - `y25_double`: Y25 prediction for double mutant
@@ -377,7 +423,7 @@ model** on a small real example dataset. A few caveats stated plainly:
   - `y25_delta`: Uncorrected genetic interaction score (Y25_double - Y25_expected)
   - `y25_std`: Standard deviation of Y25 prediction
   - `y25_q025`, `y25_q975`: 95% confidence interval bounds
-- `results/gi_scores_corrected.tsv` (after Step 4): GAM-corrected GI scores with additional columns:
+- `gi_scores_corrected.tsv` (at the `--output_dir` root, after Step 4): GAM-corrected GI scores with additional columns:
   - `y25_delta_corrected`: GAM-corrected genetic interaction score
   - `gam_prediction`: GAM model prediction (if using Python method)
 

@@ -550,5 +550,3 @@ independent screens agree both in **sign** (δ′ < 0) and in **confidence** (P 
 | [`merge_joint_results.py`](../merge_joint_results.py) | assembles the 20-column merged per-pair table |
 | [`make_signed_prob_matrix.py`](../make_signed_prob_matrix.py) | `signed_maxmag` gene×gene matrix |
 | [`make_hit_matrix.py`](../make_hit_matrix.py) | boolean hit matrix at threshold `T` (call logic) |
-</content>
-</invoke>
