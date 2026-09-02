@@ -45,7 +45,7 @@ Python module for calculating log2 fold-changes from sgRNA count data. This scri
 #### gi_scoring.py
 Genetic interaction scoring pipeline using Bayesian modeling. This script:
 - Processes log2FC data to identify all guide pairs for interaction analysis
-- Prepares model data in JSON format for Stan (memory-efficient chunked processing)
+- Prepares model data in JSON format for Stan (chunked to bound peak memory; one JSON per guide pair)
 - Runs Bayesian two-line fitness models for each guide pair independently
 - Calculates genetic interaction scores and confidence intervals from model posterior samples
 - Designed for large-scale datasets (>2M guide pairs) with parallel processing capabilities
@@ -67,11 +67,22 @@ Project the per-pair probabilities onto gene x gene matrices: a signed probabili
 
 ## Dependencies
 
-Python dependencies are listed in [`requirements.txt`](requirements.txt) as
-minimum-version bounds (not exact pins):
+The **canonical full-pipeline environment** is [`environment.yml`](environment.yml)
+(conda) — it installs everything the runbook needs, including `pygam` for the GAM
+correction and a prebuilt CmdStan toolchain:
+
+```bash
+conda env create -f environment.yml
+conda activate gi_paper_2026
+```
+
+[`requirements.txt`](requirements.txt) is a **minimal pip install** (core packages
+only, as minimum-version bounds, not exact pins). It does **not** include `pygam`,
+so the GAM-correction step needs it installed separately (or R + `mgcv`):
 
 ```bash
 pip install -r requirements.txt
+pip install pygam            # GAM-correction step (or use R + mgcv instead)
 # then, once, build the CmdStan toolchain that cmdstanpy uses for sampling:
 python -c "import cmdstanpy; cmdstanpy.install_cmdstan()"
 ```
@@ -81,17 +92,25 @@ Core packages: `cmdstanpy` (Stan interface), `numpy`, `scipy`, `pandas`, `tqdm`.
 Optional / step-specific:
 - `subread` - only for the optional FASTQ -> counts Step 1 (install via your OS package manager, e.g. `sudo apt install subread`).
 - `pysam` - BAM file handling in Step 1.
-- `pygam` - optional Python GAM correction in Step 3 (alternative: R + `mgcv`).
+- `pygam` - Python GAM correction in Step 3 (alternative: R + `mgcv`); included in `environment.yml`, **not** in `requirements.txt`.
 - `pyarrow` - optional, faster IO for very large guide-pair datasets.
 - `matplotlib`, `seaborn` - only for the demo notebooks / plotting.
 
 External:
-- `Stan` / CmdStan - probabilistic programming backend, compiled by `cmdstanpy`; needed only for the sampling steps (Steps 4-5).
+- `Stan` / CmdStan - probabilistic programming backend, compiled by `cmdstanpy`; needed for **every** Stan sampling step (GI scoring, the per-screen mixture, and the joint model).
 - `R` with `mgcv` - optional alternative to `pygam` for the GAM correction.
 
 ## Usage Examples
 
 ### Step 1: Process FASTQ files and generate sgRNA counts
+
+> **Legacy / provided as-is.** The supported public pipeline (and the shipped
+> example) **begins with pooled count tables** — see [Reproduce on the example
+> data](#reproduce-on-the-example-data). This FASTQ → counts stage
+> (`process_reads.py`, `subread.py`, `counting_tools.py`) is the lab's original
+> read-processing code, included for provenance; it depends on external tools
+> (`subread`, `pysam`) and is not exercised by the example run or its tests. Use
+> it only if you are starting from raw reads, and validate its output yourself.
 
 ```bash
 python process_reads.py sample1.fastq.gz sample2.fastq.gz --library sgRNA_library.fasta --output_dir ./results --workers 5 --mm 1
@@ -178,9 +197,25 @@ Key parameters:
 - `--workers`: Number of parallel workers (use fewer for Stan models)
 - `--force`: Overwrite existing files
 
-### Step 4: Per-screen interaction probability
+### Step 4: Aggregate guide-pairs to gene-pairs
 
-Steps 1-3 produce, for each gene pair, a per-screen GI score
+Step 3 emits one row per *guide pair*; the per-screen mixture and the joint model
+work at the *gene pair* level. Collapse guide-pairs to gene-pairs (median GI
+score + a pooled SE) into a `result_summary_long_df` table:
+
+```bash
+python aggregate_guide_pairs.py \
+    gi_analysis/gi_scores_corrected.tsv \
+    result_summary_long_df_<screen>.tsv
+```
+
+(Uses the GAM-corrected scores if present, else `gi_scores.tsv`.) This public
+aggregation is a **simplified stand-in** for the paper's HPC procedure — see
+**Scope & honesty**.
+
+### Step 5: Per-screen interaction probability
+
+Steps 1-4 produce, for each gene pair, a per-screen GI score
 (`delta_prime_median`) and its standard error (`sd_delta_prime_median`). To turn
 each score into a **probability of interaction**, fit a 1D Normal-Uniform
 mixture (`normal_uniform_mix.stan`, the model the individual screens were called
@@ -215,7 +250,7 @@ alongside the joint model's own class probabilities.
 > the null and smear the interaction component — is available via
 > `--stan univariate_normal_uniform_mix_me.stan`.
 
-### Step 5: Joint cross-screen quadrant model
+### Step 6: Joint cross-screen quadrant model
 
 Two screens (here 100 ng and 500 ng ATc) are modeled **jointly**. Each gene pair
 has a GI score in each screen; the joint model is a Normal-Uniform mixture over
@@ -274,11 +309,21 @@ Finally, project the per-pair probabilities onto gene x gene matrices:
 ```bash
 # signed probability (aggravating negative, alleviating positive); the sign is
 # taken from whichever screen has the larger-magnitude GI score:
-python make_signed_prob_matrix.py --value-mode signed_maxmag
+python make_signed_prob_matrix.py \
+    --merged-tsv joint_mixture/merged_quad_me_trunc_halfsmeared_w010.tsv \
+    --value-mode signed_maxmag \
+    --output signed_prob_matrix.tsv
 
 # boolean hit matrix; a pair is a hit if ANY directional class prob >= threshold:
-python make_hit_matrix.py --threshold 0.5
+python make_hit_matrix.py \
+    --merged-tsv joint_mixture/merged_quad_me_trunc_halfsmeared_w010.tsv \
+    --threshold 0.5 \
+    --output hit_matrix_thr050.tsv
 ```
+
+> Both matrix scripts default `--merged-tsv` to the shipped golden example table,
+> so **always pass `--merged-tsv`** (and `--output`) to act on the file you just
+> produced rather than the bundled example.
 
 We call a pair an interaction at `prob >= 0.5`; `0.95` is a stricter "confident"
 cutoff used for high-precision hit lists.
@@ -306,10 +351,14 @@ guide-pair GI scores aggregated to the gene-pair `result_summary_long_df` inputs
 calls each discrete step script in order. There are **two supported ways to run
 it**:
 
-**1. Fast joint-stage verification (reproduces the paper's joint model).**
-Starts from the shipped **golden** per-screen gene-pair tables and runs only the
-joint half (one joint Stan fit over the 120 pairs, then merge + matrices). Use
-this to verify the joint model reproduces the published result.
+**1. Fast joint-stage verification (runs the paper's joint model on the 120-pair
+subset).** Starts from the shipped **golden** per-screen gene-pair tables and
+runs only the joint half (one joint Stan fit over the 120 pairs, then merge +
+matrices). Use this to verify the joint-model implementation runs and makes the
+correct **directional** calls with the documented output **structure**. The
+probabilities still differ from the published run (the mixture is re-fit on 120
+pairs, not ~290k) — this is *not* a bit-for-bit reproduction of the archived
+values; see **Scope & honesty**.
 
 ```bash
 FROM_GOLDEN=1 bash run_example.sh
@@ -332,10 +381,12 @@ tables in `example_data/counts/exp{1,2}/` and the metadata CSV
 `example_data/experiment_metadata_exp{1,2}.csv`. `FROM_GOLDEN=1` instead reads
 the golden per-screen tables `example_data/gi_input/result_summary_long_df_exp{1,2}_toy.tsv`.
 
-**Output contract.** Both write to `example_out/` (override with `OUTDIR=...`):
-per-screen `single_screen_exp{1,2}.tsv`, the 20-column joint table
-`example_out/merged.tsv`, and the gene × gene `signed_prob_matrix.tsv` /
-`hit_matrix_thr050.tsv`.
+**Output contract.** Both write the joint artifacts to `example_out/` (override
+with `OUTDIR=...`): the 20-column joint table `example_out/merged.tsv` and the
+gene × gene `example_out/signed_prob_matrix.tsv` / `example_out/hit_matrix_thr050.tsv`.
+The **full run** additionally writes each screen's per-screen table to
+`example_out/exp{1,2}/single_screen_exp{1,2}.tsv`; the **fast run** does not —
+it reads the committed `example_data/gi_input/` tables in place.
 
 **Expected counts (the shipped example).** 15 genes → **120 canonical gene
 pairs** (105 unordered + 15 self). Each per-screen count table has **1600
@@ -377,12 +428,19 @@ model** on a small real example dataset. A few caveats stated plainly:
   example data the two diverge substantially — mean absolute difference ≈ 0.67
   (screen 1) / 0.77 (screen 2), with most pairs shifting by > 0.15 — so
   `bash run_example.sh` (the full chain, through the simplified aggregation) is
-  meant to **run end-to-end, not to match the paper's numbers**. For a faithful
-  joint-model reproduction, `FROM_GOLDEN=1 bash run_example.sh` starts from the
-  **exact HPC per-screen inputs** shipped in `example_data/gi_input/*.tsv`.
-- Because MCMC sampling is stochastic, the toy checks use **tolerances**, not
-  exact equality, and the shipped `example_data/expected/` values are golden
-  checkpoints rather than a single uniquely-correct answer.
+  meant to **run end-to-end, not to match the paper's numbers**. To isolate the
+  joint model from that aggregation gap, `FROM_GOLDEN=1 bash run_example.sh`
+  starts from the **exact HPC per-screen inputs** shipped in
+  `example_data/gi_input/*.tsv` — but even then the joint mixture is re-fit on the
+  120-pair subset, so the **class calls** match the paper while the exact
+  probabilities still differ (not a bit-for-bit reproduction of the archived
+  values).
+- The example check (`check_example.py`) validates the **structure** (120×20
+  table, unique pairs, complete probabilities, square matrices) and the
+  **directional class calls** of the known Set A pairs — not exact probability
+  values. The shipped `example_data/expected/` values are golden checkpoints for
+  an *informational* comparison, not a pass/fail gate (MCMC is stochastic and the
+  toy refit differs, as above).
 - The interactive per-pair web bundle used for the paper's browsable figures is
   **intentionally excluded** from this repository.
 
@@ -476,7 +534,7 @@ The pipeline is designed for large-scale CRISPRi passaging experiments where:
 - Log2FC values represent the fitness effect of gene knockdown over time
 - Genetic interaction scores quantify non-additive fitness effects between gene pairs
 
-The pipeline can handle datasets with millions of guide pairs through memory-efficient chunked processing and parallel computation. The final output provides:
+The pipeline chunks the per-guide-pair fitting to bound **peak memory** and parallelizes across workers. Note that the on-disk layout is **file-heavy**: it writes one JSON plus one samples table per guide pair (the toy run of ~3,200 fits produced ~9,600 files / ~1 GB), so at the million-guide-pair scale plan for millions of small files and hundreds of GB per screen — run on a compute partition (not a login node), stage small files on local scratch, write sharded outputs, and watch your inode quota. The final output provides:
 - **Y25_delta**: Raw genetic interaction scores (Y25_double - Y25_expected)
 - **Y25_delta_corrected** (optional): GAM-corrected scores that account for systematic biases
 
