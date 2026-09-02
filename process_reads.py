@@ -159,8 +159,8 @@ if __name__ == "__main__":
     parallel_args = []
     for path in args:
         parallel_args.append(
-            dict(sample_path=path, index_path=fasta_path, 
-                    output_dir="./BAM_and_Counts", label=label, debug=DEBUG,
+            dict(sample_path=path, index_path=fasta_path,
+                    output_dir=output_dir, label=label, debug=DEBUG,
                     maxMismatches=maxMismatches, force=force)
         )
 
@@ -174,8 +174,8 @@ if __name__ == "__main__":
     diagnostic_file_list = [x[1] for x in result_count_diag_list]
 
 
-    counting_tools.merge_counts(count_file_list, output_path="merged_%s_counts.txt" % label)
-    counting_tools.merge_diagnostics(diagnostic_file_list, output_path="merged_%s_diagnostics.txt" % label)
+    counting_tools.merge_counts(count_file_list, output_path=os.path.join(output_dir, "merged_%s_counts.txt" % label))
+    counting_tools.merge_diagnostics(diagnostic_file_list, output_path=os.path.join(output_dir, "merged_%s_diagnostics.txt" % label))
      
 
     logger.info("Done.")

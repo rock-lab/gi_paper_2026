@@ -83,8 +83,11 @@ fi
 echo ">>> [joint] step 1/4  fit joint cross-screen quadrant model (Stan)"
 "$PY" run_joint_model.py "$SINGLE1" "$SINGLE2" "$OUTDIR/joint" --winsorize-pct "$WINSORIZE_PCT"
 
-# run_joint_model wrote <prefix>_<tag>_summary.tsv (tag encodes the model + winsorize).
-SUMMARY=$(ls "$OUTDIR"/joint_*_summary.tsv | head -1)
+# run_joint_model wrote <prefix>_<tag>_summary.tsv (tag encodes the model +
+# winsorize). Reconstruct the exact name the same way the Python does
+# (0.10 -> "010"), so this doesn't depend on which files happen to match a glob.
+WPCT=$(printf "%.2f" "$WINSORIZE_PCT" | tr -d '.')
+SUMMARY="$OUTDIR/joint_quad_me_trunc_halfsmeared_w${WPCT}_summary.tsv"
 MERGED="$OUTDIR/merged.tsv"
 
 echo ">>> [joint] step 2/4  merge -> 20-column per-pair table"

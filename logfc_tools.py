@@ -284,8 +284,11 @@ def get_logfc_dataframe_from_metadata(metadata_path, output_path=None, summary_m
                 logger.info(f"  Minus data shapes: {[m.shape for m in minus_data]}")
                 continue
 
-            # Apply LOD filtering to experimental condition
+            # Apply LOD filtering to experimental condition. The +ATc and -ATc
+            # summaries are each computed ONCE per generation here (not once per
+            # sgRNA row below), so this stays O(n) at the >2M-guide scale.
             plus_summary = get_summary_stat_function(summary_metric)(plus_matrix)
+            minus_summary = get_summary_stat_function(summary_metric)(minus_matrix)
             good_detection = plus_summary >= lod_limit
 
             # First pass: build sequence to guide number mapping
@@ -391,7 +394,7 @@ def get_logfc_dataframe_from_metadata(metadata_path, output_path=None, summary_m
                         'guide_name2': guide_name2,
                         'log2fc': logfc_values[i],
                         'exp_mean': plus_summary[i],
-                        'ctrl_mean': get_summary_stat_function(summary_metric)(minus_matrix)[i],
+                        'ctrl_mean': minus_summary[i],
                         'good': good_detection[i]
                     }
                 else:
@@ -406,7 +409,7 @@ def get_logfc_dataframe_from_metadata(metadata_path, output_path=None, summary_m
                         'seq': "",
                         'log2fc': logfc_values[i],
                         'exp_mean': plus_summary[i],
-                        'ctrl_mean': get_summary_stat_function(summary_metric)(minus_matrix)[i],
+                        'ctrl_mean': minus_summary[i],
                         'good': good_detection[i]
                     }
 
@@ -550,7 +553,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Calculate log2FC from sgRNA count data")
     parser.add_argument("--metadata", required=True, help="Path to experiment metadata CSV file")
-    parser.add_argument("--output", required=True, help="Path to output log2FC file")
+    parser.add_argument("--output", help="Path to output log2FC file (required unless --template)")
     parser.add_argument("--template", action="store_true", help="Create metadata template file")
     parser.add_argument("--summary_metric", default="mean", help="Summary metric for replicates")
     parser.add_argument("--pseudo", type=float, default=1.0, help="Pseudocount for log2FC")
@@ -565,6 +568,9 @@ if __name__ == "__main__":
         template.to_csv(template_path, index=False)
         logger.info(f"Created metadata template: {template_path}")
         sys.exit(0)
+
+    if not args.output:
+        parser.error("--output is required (except with --template)")
 
     # Calculate log2FC
     df = get_logfc_dataframe_from_metadata(

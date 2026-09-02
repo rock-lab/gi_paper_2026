@@ -93,6 +93,15 @@ def load_base_df(exp1_path, exp2_path):
     else:
         print("  (SE columns not found; skipping se_exp and gi_score_overlaps_zero columns)")
 
+    # `correlation` is optional upstream: the paper's HPC aggregation carries a
+    # per-pair guide-level correlation, but the simplified public
+    # aggregate_guide_pairs.py does not. Always surface both columns (NaN where
+    # absent) so the merged table keeps a stable 20-column schema either way.
+    for exp in ["exp1", "exp2"]:
+        col = f"correlation_{exp}"
+        if col not in base.columns:
+            base[col] = np.nan
+
     return base
 
 
