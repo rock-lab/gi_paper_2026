@@ -1,7 +1,5 @@
 import sys
 import os
-import pysam
-import numpy
 
 import logging
 import datetime

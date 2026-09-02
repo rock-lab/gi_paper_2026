@@ -1,11 +1,6 @@
 import sys
 import os
-import pysam
-import numpy
-import scipy.stats
-import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
+import pysam                 # BAM handling (the only heavy dependency this module uses)
 
 import logging
 import datetime

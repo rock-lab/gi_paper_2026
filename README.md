@@ -104,13 +104,15 @@ External:
 
 ### Step 1: Process FASTQ files and generate sgRNA counts
 
-> **Legacy / provided as-is.** The supported public pipeline (and the shipped
-> example) **begins with pooled count tables** — see [Reproduce on the example
+> **Starting point.** The supported public pipeline (and the shipped example)
+> **begins with pooled count tables** — see [Reproduce on the example
 > data](#reproduce-on-the-example-data). This FASTQ → counts stage
-> (`process_reads.py`, `subread.py`, `counting_tools.py`) is the lab's original
-> read-processing code, included for provenance; it depends on external tools
-> (`subread`, `pysam`) and is not exercised by the example run or its tests. Use
-> it only if you are starting from raw reads, and validate its output yourself.
+> (`process_reads.py`, `subread.py`, `counting_tools.py`) is the lab's
+> read-processing code for starting from raw reads. It requires the external
+> `subread` aligner plus `pysam` (BAM handling). The `subread` command wrappers
+> are unit-tested for correct argument construction and now fail loudly on a
+> nonzero exit code; the modules import without the plotting stack. The stage is
+> not run by the example itself, so validate its output on your own data.
 
 ```bash
 python process_reads.py sample1.fastq.gz sample2.fastq.gz --library sgRNA_library.fasta --output_dir ./results --workers 5 --mm 1
