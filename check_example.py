@@ -8,13 +8,14 @@ freshly produced run against the golden tables in ``example_data/expected/``.
 own data, drop this step (there is no golden reference for arbitrary data).
 
 For each known pair it prints the single-screen call (δ′ and P per screen) and
-the joint call, asserts the joint dominant class is correct, and — when the
-golden table is present — checks the joint probabilities agree within a
-tolerance (MCMC is stochastic, so never exact equality).
+the joint call, and asserts the joint dominant class is correct. When the golden
+table is present it also prints an INFORMATIONAL comparison to the published
+probabilities — those are expected to differ (the toy re-fits the global mixture
+on ~120 pairs) and do NOT gate pass/fail; only the class calls do.
 
 Usage:
     python check_example.py --single1 S1.tsv --single2 S2.tsv --merged MERGED.tsv \\
-        [--golden-dir example_data/expected] [--tol 0.15]
+        [--golden-dir example_data/expected]
 """
 
 import argparse
@@ -28,9 +29,14 @@ import pandas as pd
 CHECKS = [
     ("RVBD1854c", "RVBD0392c", "aggravating", "ndh-ndhA"),
     ("RVBD0050",  "RVBD3682",  "aggravating", "ponA1-ponA2"),
+    ("RVBD2754c", "RVBD2764c", "aggravating", "thyX-thyA"),
     ("RVBD2193",  "RVBD2200c", "alleviating", "ctaE-ctaC"),
     ("RVBD1304",  "RVBD3795",  "alleviating", "atpB-embB"),
 ]
+# Structural expectations for the shipped example's merged joint table.
+EXPECTED_PAIRS = 120       # 15 Set A genes -> 105 unordered + 15 self-pairs
+EXPECTED_COLS = 20         # the documented 20-column schema
+EXPECTED_GENES = 15        # gene x gene matrices are EXPECTED_GENES square
 CLASS_COL = {"aggravating": "prob_aggravating",
              "alleviating": "prob_alleviating",
              "discordant":  "prob_discordant"}
@@ -54,6 +60,40 @@ def one_screen(frame, o1, o2):
         return "n/a"
 
 
+def structural_errors(m):
+    """Return a list of structural problems with the merged joint table (empty if
+    it matches the documented example contract: shape, unique pairs, full probs)."""
+    errs = []
+    if len(m) != EXPECTED_PAIRS:
+        errs.append(f"expected {EXPECTED_PAIRS} rows, got {len(m)}")
+    if m.shape[1] != EXPECTED_COLS:
+        errs.append(f"expected {EXPECTED_COLS} columns, got {m.shape[1]}")
+    if {"orf1", "orf2"}.issubset(m.columns) and m.duplicated(subset=["orf1", "orf2"]).any():
+        errs.append(f"{int(m.duplicated(subset=['orf1', 'orf2']).sum())} duplicate (orf1,orf2) pairs")
+    missing = [c for c in PROB_COLS if c not in m.columns]
+    if missing:
+        errs.append(f"missing probability columns: {missing}")
+    else:
+        n_nan = int(m[PROB_COLS].isna().any(axis=1).sum())
+        if n_nan:
+            errs.append(f"{n_nan} rows with NaN probability values")
+    return errs
+
+
+def matrix_errors(path, kind):
+    """Return a list of problems with a gene x gene matrix TSV (empty if it is a
+    square EXPECTED_GENES x EXPECTED_GENES table)."""
+    import pandas as _pd
+    try:
+        mat = _pd.read_csv(path, sep="\t", index_col=0)
+    except Exception as e:                       # noqa: BLE001 - report, don't crash
+        return [f"{kind} matrix unreadable ({path}): {e}"]
+    n = EXPECTED_GENES
+    if mat.shape != (n, n):
+        return [f"{kind} matrix expected {n}x{n}, got {mat.shape[0]}x{mat.shape[1]}"]
+    return []
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -62,12 +102,31 @@ def main():
     ap.add_argument("--merged", required=True, help="merged 20-column joint table")
     ap.add_argument("--golden-dir", default="example_data/expected",
                     help="dir with the golden merged_*.tsv (default: example_data/expected)")
-    ap.add_argument("--tol", type=float, default=0.15, help="abs tolerance on probs (default 0.15)")
+    ap.add_argument("--signed-matrix", help="optional signed_prob_matrix.tsv to shape-check")
+    ap.add_argument("--hit-matrix", help="optional hit-matrix TSV to shape-check")
     args = ap.parse_args()
 
     s1 = pd.read_csv(args.single1, sep="\t")
     s2 = pd.read_csv(args.single2, sep="\t")
     m = pd.read_csv(args.merged, sep="\t")
+
+    # Structural contract: the merged table must be the documented shape, with
+    # unique pairs and no missing probabilities; optional matrices must be square.
+    struct_errs = structural_errors(m)
+    if args.signed_matrix:
+        struct_errs += matrix_errors(args.signed_matrix, "signed")
+    if args.hit_matrix:
+        struct_errs += matrix_errors(args.hit_matrix, "hit")
+    has_mtx = bool(args.signed_matrix or args.hit_matrix)
+    print("Structural checks on the merged table" + (" + matrices" if has_mtx else "") + ":")
+    if struct_errs:
+        for e in struct_errs:
+            print(f"  [FAIL] {e}")
+    else:
+        print(f"  [OK] {EXPECTED_PAIRS} rows x {EXPECTED_COLS} cols, unique pairs, "
+              f"complete probabilities"
+              + (f", matrices {EXPECTED_GENES}x{EXPECTED_GENES}" if has_mtx else ""))
+    print()
 
     print("Known Set A pairs — single-screen call vs joint call:")
     print("  pass = correct interaction DIRECTION (expected class dominates the other two")
@@ -109,10 +168,13 @@ def main():
         print(f"\n(no golden table in {args.golden_dir}/; skipped published-value comparison)")
 
     print()
+    if struct_errs:
+        sys.exit("EXAMPLE CHECK: FAILED — merged table / matrix failed structural checks")
     if not ok:
         sys.exit("EXAMPLE CHECK: FAILED — a known pair has the wrong interaction class")
     print(f"EXAMPLE CHECK: PASSED — all {len(CHECKS)} known pairs have the correct interaction "
-          f"class\n              ({n_confident}/{len(CHECKS)} also clear the 0.50 hit threshold)")
+          f"class + structural checks\n              "
+          f"({n_confident}/{len(CHECKS)} also clear the 0.50 hit threshold)")
 
 
 if __name__ == "__main__":

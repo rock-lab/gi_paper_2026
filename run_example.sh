@@ -104,10 +104,17 @@ echo ">>> [joint] step 4/4  boolean hit matrix (threshold 0.5)"
 
 echo
 echo "Done. Outputs in $OUTDIR/:"
-echo "  per-screen single-screen tables, merged joint table ($MERGED), and gene x gene matrices."
+if [ "$FROM_GOLDEN" = "1" ]; then
+  echo "  merged joint table ($MERGED) and gene x gene matrices."
+  echo "  (per-screen tables were read in place from example_data/gi_input/, not written here.)"
+else
+  echo "  per-screen single-screen tables, merged joint table ($MERGED), and gene x gene matrices."
+fi
 
 # ============ EXAMPLE-ONLY validation — DELETE for your own data =============
 echo
-echo ">>> validating known Set A interactions vs the golden tables"
-"$PY" check_example.py --single1 "$SINGLE1" --single2 "$SINGLE2" --merged "$MERGED"
+echo ">>> validating known Set A interactions + structure vs the golden tables"
+"$PY" check_example.py --single1 "$SINGLE1" --single2 "$SINGLE2" --merged "$MERGED" \
+      --signed-matrix "$OUTDIR/signed_prob_matrix.tsv" \
+      --hit-matrix "$OUTDIR/hit_matrix_thr050.tsv"
 # =============================================================================
