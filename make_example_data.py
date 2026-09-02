@@ -16,7 +16,7 @@ provenance of the toy data is fully reproducible from the raw sources.
 
 It produces:
   1. example_data/gi_input/result_summary_long_df_exp{1,2}_toy.tsv
-        Per-screen GI scores (+ their SE) for the 55 toy pairs.  These are
+        Per-screen GI scores (+ their SE) for the 120 example pairs.  These are
         PRE-DERIVED GOLDEN values: they are the *input* to the joint model, and
         are what the joint-model notebook/runner consumes.
   2. example_data/counts/exp1/*  and  example_data/counts/exp2/*

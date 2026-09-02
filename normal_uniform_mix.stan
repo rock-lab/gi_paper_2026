@@ -1,12 +1,18 @@
 //
-// This Stan program defines a simple model, with a
-// vector of values 'y' modeled as normally distributed
-// with mean 'mu' and standard deviation 'sigma'.
+// Per-screen (1D) Normal / Uniform mixture for genetic-interaction calls.
 //
-// Learn more about model development with Stan at:
+// One screen's per-gene-pair GI scores y[n] are modeled as a two-component
+// mixture:
+//   - null component:        Normal(mu, sigma)      (no interaction => GI ~ 0)
+//   - interaction component: Uniform(min_y, max_y)  over the winsorized support
 //
-//    http://mc-stan.org/users/interfaces/rstan.html
-//    https://github.com/stan-dev/rstan/wiki/RStan-Getting-Started
+// theta is the interaction fraction (Beta prior with mean rho_theta and
+// concentration kappa_theta). The generated quantities block returns
+// log_pZ1[n] = log P(interaction | y[n]) per pair, which
+// run_per_screen_mixture.py averages over draws into prob_interaction_median.
+//
+// This is the no-measurement-error variant (the per-pair SE is ignored);
+// univariate_normal_uniform_mix_me.stan is the measurement-error counterpart.
 //
 
 // The input data is a vector 'y' of length 'N'.

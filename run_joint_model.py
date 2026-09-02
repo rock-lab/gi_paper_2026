@@ -2,8 +2,8 @@
 """
 Run the joint genetic-interaction (GI) probability model on two screens.
 
-This is a slimmed, self-contained port of the lab pipeline's
-`run_joint_mixture_models.py`, hardcoded to the single PRIMARY model:
+This is a slimmed, self-contained joint-model driver, hardcoded to the
+single PRIMARY model used in the paper:
 
     joint_normal_uniform_mix_quadrant_me_trunc_halfsmeared.stan
 
@@ -20,16 +20,16 @@ each carrying `orf_pair`, `delta_prime_median` (= per-screen GI score) and
 on `orf_pair`.
 
 Output is a per-pair summary TSV whose class-probability columns are named so
-that `merge_joint_results_per_model.py` can pick them up directly:
+that `merge_joint_results.py` can pick them up directly:
 
     <output_prefix>_quad_me_trunc_halfsmeared_w<PCT>_summary.tsv
 
 Example
 -------
     python run_joint_model.py \
-        example_data/gi_input/exp1_gi_scores.tsv \
-        example_data/gi_input/exp2_gi_scores.tsv \
-        example_data/expected/joint
+        example_data/gi_input/result_summary_long_df_exp1_toy.tsv \
+        example_data/gi_input/result_summary_long_df_exp2_toy.tsv \
+        example_out/joint
 
 Dependencies: cmdstanpy, numpy, pandas (plus a working CmdStan install).
 """

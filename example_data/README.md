@@ -78,8 +78,9 @@ both read these with `index_col=0` and merge on `orf_pair`).
 ### `expected/merged_quad_me_trunc_halfsmeared_toy.tsv` is the GOLDEN output
 
 This is the published joint-model result for the **primary model**
-(`quad_me_trunc_halfsmeared`, winsorize percentile 0.10), sliced to the 55 toy
-pairs. Use it to check that your re-run reproduces the paper. Its 20 columns are:
+(`quad_me_trunc_halfsmeared`, winsorize percentile 0.10), sliced to the 120
+example pairs (105 gene pairs + 15 self-pairs). Use it to check that your re-run
+reproduces the paper. Its 20 columns are:
 
 ```
 orf1 orf2 name1 name2
@@ -125,12 +126,12 @@ carried a stray `test_counts_*` column, which is dropped during subsetting.
 
 **exp2 (500 ng/mL ATc)** — sampled at `G0, G2, ..., G20`.
 
-> **TODO / caveat (exp2 generations):** the `generations` column in
+> **Note (exp2 generations):** the `generations` column in
 > `experiment_metadata_exp2.csv` is taken from the `G{n}` timepoint label in each
-> file name (i.e. `G8` → 8 generations). `medcas9/condition_stats.txt` provides
-> only these timepoint labels, not an explicit generations field, so the exact
-> generation counts should be confirmed against the screen's growth records
-> before being used quantitatively.
+> file name (i.e. `G8` → 8 generations), because the source records these
+> timepoints only as `G{n}` labels rather than as an explicit generations field.
+> This nominal mapping is what the example uses; treat it as an approximate
+> generation count rather than an exact one.
 
 ## Provenance
 

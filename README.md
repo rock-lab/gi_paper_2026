@@ -2,7 +2,7 @@
 
 Repository containing the code and methods for genetic interaction screens analysis in M. tuberculosis and M. smegmatis.
 
-> **In a hurry?** Jump to [Reproduce on toy data](#reproduce-on-toy-data-joint-model-quickstart) to run the joint genetic-interaction probability model end-to-end on 10 real genes with one command, or read the model write-up in [`docs/MODEL.md`](docs/MODEL.md).
+> **In a hurry?** Jump to [Reproduce on the example data](#reproduce-on-the-example-data) to run the joint genetic-interaction probability model end-to-end on 15 real genes with one command, or read the model write-up in [`docs/MODEL.md`](docs/MODEL.md).
 
 ## Code
 
@@ -321,14 +321,20 @@ tables via `check_example.py`); delete that block when adapting the runbook.
 ## Scope & honesty
 
 This public repository reproduces the **joint genetic-interaction probability
-model** on a small toy dataset. A few caveats stated plainly:
+model** on a small real example dataset. A few caveats stated plainly:
 
 - The per-screen **guide-pair GI scores are real** (from the published screens),
-  but the public **guide -> gene-pair aggregation is approximate** relative to
-  the full HPC pipeline (which layers on additional filtering, GAM correction,
-  and hierarchical pooling). For that reason we **ship the golden per-screen
-  inputs** in `example_data/gi_input/*.tsv` rather than asking you to reproduce them
-  bit-for-bit from counts.
+  but the public **guide -> gene-pair aggregation** (`aggregate_guide_pairs.py`)
+  is a **simplified stand-in** for the paper's HPC aggregation: it takes the
+  median guide-pair GI score per gene pair plus a pooled standard error, and
+  does **not** reproduce the cluster's richer per-pair posterior model (the
+  extra filtering, hierarchical pooling, and the `correlation` column). On the
+  example data the two diverge substantially — mean absolute difference ≈ 0.67
+  (screen 1) / 0.77 (screen 2), with most pairs shifting by > 0.15 — so
+  `bash run_example.sh` (the full chain, through the simplified aggregation) is
+  meant to **run end-to-end, not to match the paper's numbers**. For a faithful
+  joint-model reproduction, `FROM_GOLDEN=1 bash run_example.sh` starts from the
+  **exact HPC per-screen inputs** shipped in `example_data/gi_input/*.tsv`.
 - Because MCMC sampling is stochastic, the toy checks use **tolerances**, not
   exact equality, and the shipped `example_data/expected/` values are golden
   checkpoints rather than a single uniquely-correct answer.
@@ -348,14 +354,16 @@ model** on a small toy dataset. A few caveats stated plainly:
 - Log2FC dataframe in tab-delimited format with columns:
   - `strain`: Bacterial strain
   - `experiment`: Experiment identifier
-  - `G`: Generation/passage number
-  - `ORF`: Gene/ORF identifier
-  - `SEQ`: sgRNA sequence identifier
+  - `generations`: Generation/passage number
   - `ID`: Full sgRNA ID
-  - `Y`: Log2 fold-change (+ATC/-ATC)
+  - `orf`: Gene/ORF identifier
+  - `seq`: sgRNA sequence identifier
+  - `log2fc`: Log2 fold-change (+ATC/-ATC)
   - `exp_mean`: Mean count in experimental (+ATC) condition
   - `ctrl_mean`: Mean count in control (-ATC) condition
-  - `GOOD`: Quality flag based on limit of detection
+  - `good`: Quality flag based on limit of detection
+  - For dual-guide (paired) constructs the two sides are also split out:
+    `orf1`, `orf2`, `seq1`, `seq2`, `guide_name`, `guide_name1`, `guide_name2`
 
 ### Step 3 Output (Genetic Interaction Scoring)
 - `model_data/`: JSON files for each guide pair (Stan model input)

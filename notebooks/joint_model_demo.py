@@ -20,7 +20,7 @@
 #
 # The demo runs in one of two modes:
 #   * **Live** (a working CmdStan toolchain is installed): compile + sample the
-#     primary Stan model on the 55 toy pairs, then extract the class
+#     primary Stan model on the 120 example pairs, then extract the class
 #     probabilities from the posterior.
 #   * **Fallback** (no CmdStan): load the pre-derived golden checkpoint
 #     `example_data/expected/merged_quad_me_trunc_halfsmeared_toy.tsv` so a reader
@@ -28,7 +28,7 @@
 #
 # NOTE on interpretation: the golden checkpoint reflects the model **fit on the
 # full published cohort** (thousands of pairs), which is what the paper reports.
-# A *live* fit on only these 55 toy pairs is illustrative — the global
+# A *live* fit on only these 120 example pairs is illustrative — the global
 # parameters (mu, sigma, rho, mixture weights) are learned from far fewer points,
 # so per-pair probabilities can differ from the checkpoint. That is expected and
 # is exactly why the pipeline ships both a runnable chain and golden outputs.
@@ -114,7 +114,7 @@ except Exception as exc:
     print(f"CmdStan not usable ({type(exc).__name__}: {exc}).")
 
 print(f"HAS_CMDSTAN = {HAS_CMDSTAN}  ->  "
-      + ("LIVE fit on the 55 toy pairs" if HAS_CMDSTAN
+      + ("LIVE fit on the 120 example pairs" if HAS_CMDSTAN
          else "FALLBACK to golden checkpoint"))
 
 
@@ -125,7 +125,7 @@ print(f"HAS_CMDSTAN = {HAS_CMDSTAN}  ->  "
 # it (same winsorization, same fixed origin, same hyperpriors). Fall back to a
 # faithful local copy if that module is not importable in this checkout.
 build_stan_data = None
-for _mod in ("run_joint_model", "run_joint_mixture_models"):
+for _mod in ("run_joint_model",):
     try:
         build_stan_data = __import__(_mod).build_stan_data
         print(f"Using build_stan_data() imported from {_mod}.")
@@ -139,7 +139,7 @@ if build_stan_data is None:
     def build_stan_data(merged, include_se=False, winsorize_pct=None):
         """Build the Stan data dict for the joint quadrant models.
 
-        Faithful copy of run_joint_mixture_models.build_stan_data: fixed origin
+        Faithful copy of run_joint_model.build_stan_data: fixed origin
         at 0, hyperpriors mu_mu=0/sigma_mu=2/a_sigma=2/b_sigma=0.1, and optional
         winsorization of the uniform support to [pct, 100-pct] per axis.
         """
@@ -266,7 +266,7 @@ if HAS_MPL:
                s=45, c="#377eb8", edgecolor="white", linewidth=0.5, zorder=3)
     ax.set_xlabel(X_LABEL)
     ax.set_ylabel(Y_LABEL)
-    ax.set_title("Raw per-screen GI scores (55 toy pairs)")
+    ax.set_title("Raw per-screen GI scores (120 example pairs)")
     lim = max(abs(np.r_[tidy["gi_score_exp1"], tidy["gi_score_exp2"]]).max() * 1.1, 1)
     ax.set_xlim(-lim, lim)
     ax.set_ylim(-lim, lim)
@@ -350,7 +350,7 @@ if HAS_CMDSTAN:
     probs = pd.DataFrame(probs)
 
     results = tidy.merge(probs, on="orf_pair", how="inner")
-    source_note = "LIVE Stan fit on the 55 toy pairs"
+    source_note = "LIVE Stan fit on the 120 example pairs"
 
     # Quick posterior sanity read on the global parameters.
     for name in ["mu1", "mu2", "sigma1", "sigma2", "rho"]:

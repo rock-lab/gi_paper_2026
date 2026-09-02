@@ -594,8 +594,8 @@ generated quantities {
             DataFrame with Y25_delta scores added
         """
         # Build lookup dictionaries for single mutants, POSITION-MATCHED to the
-        # double (matching the paper convention in
-        # indiv_tools.get_all_possible_guide_y25_label_combinations): for a double
+        # double (matching the paper's position-matched single-mutant
+        # convention): for a double
         # "A(left)_B(right)", gene A's single is A on the LEFT (A_Negative) and
         # gene B's single is B on the RIGHT (Negative_B) — each gene's single is
         # taken in the same construct position it occupies in the double.

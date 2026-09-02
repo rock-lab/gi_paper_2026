@@ -4,7 +4,7 @@ Per-screen (1D) Normal-Uniform mixture model for genetic-interaction calls.
 
 This is the *per-screen* step that sits between per-guide-pair GI scoring
 (gi_scoring.py -> result_summary_long_df) and the *joint* two-experiment
-model (run_joint_mixture_models.py). For a single screen it fits a two-
+model (run_joint_model.py). For a single screen it fits a two-
 component mixture to the gene-pair GI scores:
 
   - Null component:        Normal(mu, sigma), variance inflated per pair by
@@ -248,7 +248,7 @@ def main():
     df["prob_interaction_median"] = prob_interaction
 
     # Write the augmented table with a leading unnamed index column so it is a
-    # drop-in result_summary_long_df for run_joint_mixture_models.py.
+    # drop-in result_summary_long_df for run_joint_model.py.
     df.to_csv(args.output_tsv, sep="\t", index=True)
     print(f"\n  Saved: {args.output_tsv} ({len(df):,} pairs)")
 

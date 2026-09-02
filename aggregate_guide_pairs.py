@@ -4,8 +4,8 @@ Aggregate guide-pair GI scores up to the gene-pair level.
 
 This is the "missing seam" between the per-guide-pair scoring step
 (``gi_scoring.py`` -> ``gi_scores.tsv`` / ``gi_scores_corrected.tsv``) and the
-per-screen probabilistic mixture model (``run_per_screen_mixture.py``, the
-slimmed ``run_univariate_mixture_model.py``). The mixture model consumes a
+per-screen probabilistic mixture model (``run_per_screen_mixture.py``). The
+mixture model consumes a
 ``result_summary_long_df``-schema TSV whose rows are *gene pairs* with a point
 GI score (``delta_prime_median``) and a measurement-error standard error
 (``sd_delta_prime_median``). ``gi_scoring.py`` only emits *guide-pair* rows, so
