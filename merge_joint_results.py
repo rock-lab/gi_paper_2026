@@ -45,10 +45,37 @@ EXP_COLS = [
     "correlation",
 ]
 
+# Columns that MUST be present in each per-screen input (the join key, the pair
+# identity, and the GI score + its SE). A missing one is fatal rather than
+# silently dropped by the EXP_COLS selection below.
+REQUIRED_EXP_COLS = [
+    "orf_pair", "orf1", "orf2", "delta_prime_median", "sd_delta_prime_median",
+]
+
 
 # ──────────────────────────────────────────────────────────────────
 # Base DataFrame: per-screen GI scores from both experiments
 # ──────────────────────────────────────────────────────────────────
+
+def _read_per_screen_tsv(path):
+    """Read a per-screen result_summary TSV, tolerating (and dropping) a leading
+    unnamed index column WITHOUT index_col=0 — which would otherwise consume the
+    first real column (orf1) of an index-free TSV."""
+    df = pd.read_csv(path, sep="\t")
+    if len(df.columns) and str(df.columns[0]).startswith("Unnamed:"):
+        df = df.drop(columns=df.columns[0])
+    return df
+
+
+def _require_cols(df, label, path):
+    """Fail loudly if a per-screen table is missing a required column, rather than
+    letting the EXP_COLS selection silently drop it."""
+    missing = [c for c in REQUIRED_EXP_COLS if c not in df.columns]
+    if missing:
+        raise ValueError(
+            f"{label} ({path}) is missing required column(s): {missing}. "
+            f"Present columns: {list(df.columns)}")
+
 
 def load_base_df(exp1_path, exp2_path):
     """Load the two per-screen result_summary TSVs and inner-join on orf_pair.
@@ -58,17 +85,36 @@ def load_base_df(exp1_path, exp2_path):
     merge), and adds gi_score_overlaps_zero_exp{1,2} = |gi| < 1.96*se.
     """
     print("Loading Exp1...")
-    exp1 = pd.read_csv(exp1_path, sep="\t", index_col=0)
+    exp1 = _read_per_screen_tsv(exp1_path)
+    _require_cols(exp1, "Exp1", exp1_path)
     exp1 = exp1[[c for c in EXP_COLS if c in exp1.columns]]
     print(f"  {len(exp1)} pairs")
 
     print("Loading Exp2...")
-    exp2 = pd.read_csv(exp2_path, sep="\t", index_col=0)
+    exp2 = _read_per_screen_tsv(exp2_path)
+    _require_cols(exp2, "Exp2", exp2_path)
     exp2 = exp2[[c for c in EXP_COLS if c in exp2.columns]]
     print(f"  {len(exp2)} pairs")
 
+    # Guard the join: duplicate orf_pair rows would multiply out (a silent
+    # cartesian blow-up), and pairs present in only one screen are dropped by the
+    # inner join — report how many so that loss is never invisible.
+    for df, lbl in [(exp1, "Exp1"), (exp2, "Exp2")]:
+        dup = df["orf_pair"].duplicated()
+        if dup.any():
+            raise ValueError(
+                f"{lbl} has {int(dup.sum())} duplicate orf_pair rows "
+                f"(e.g. {df.loc[dup, 'orf_pair'].head(3).tolist()}). Aggregate to "
+                f"one row per gene pair before merging.")
+    only1 = set(exp1["orf_pair"]) - set(exp2["orf_pair"])
+    only2 = set(exp2["orf_pair"]) - set(exp1["orf_pair"])
+    if only1 or only2:
+        print(f"  NOTE: {len(only1)} pairs only in Exp1, {len(only2)} only in Exp2; "
+              f"inner join keeps the {len(set(exp1['orf_pair']) & set(exp2['orf_pair']))} shared.")
+
     print("Merging experiments (inner join on orf_pair)...")
-    base = exp1.merge(exp2, on="orf_pair", suffixes=("_exp1", "_exp2"), how="inner")
+    base = exp1.merge(exp2, on="orf_pair", suffixes=("_exp1", "_exp2"),
+                      how="inner", validate="one_to_one")
     print(f"  {len(base)} shared pairs")
 
     # Rename per-screen GI score / SE columns for clarity
@@ -156,7 +202,30 @@ def merge_summary(base_df, summary_path):
     prob_cols = [c for c in summary.columns if c.startswith("prob_")]
     summary = summary[["orf_pair"] + prob_cols]
 
-    merged = base_df.merge(summary, on="orf_pair", how="left")
+    # The joint summary must cover exactly the base pairs, one row each: a missing
+    # pair would left-join to NaN joint probabilities (a silent hole), a duplicate
+    # would multiply rows.
+    dup = summary["orf_pair"].duplicated()
+    if dup.any():
+        raise ValueError(
+            f"Joint summary has {int(dup.sum())} duplicate orf_pair rows "
+            f"(e.g. {summary.loc[dup, 'orf_pair'].head(3).tolist()}).")
+    missing = set(base_df["orf_pair"]) - set(summary["orf_pair"])
+    if missing:
+        raise ValueError(
+            f"Joint summary is missing {len(missing)} of the {len(base_df)} merged "
+            f"pairs (e.g. {sorted(missing)[:3]}); their joint probabilities would be "
+            f"NaN. Run the joint model on the same pair set as the merge.")
+
+    merged = base_df.merge(summary, on="orf_pair", how="left", validate="one_to_one")
+
+    # Belt-and-suspenders: no NaN in the core class probabilities after the join.
+    core = [c for c in MODEL_PROB_ORDER if c in merged.columns]
+    if core:
+        n_nan = int(merged[core].isna().any(axis=1).sum())
+        if n_nan:
+            raise ValueError(
+                f"{n_nan} merged pairs have NaN joint probabilities after the merge.")
     return merged
 
 

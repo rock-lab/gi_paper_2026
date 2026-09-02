@@ -104,8 +104,25 @@ def load_and_merge(tsv1_path, tsv2_path, load_se=True):
     df1 = _load(tsv1_path, "Exp1")
     df2 = _load(tsv2_path, "Exp2")
 
+    # Guard the join: duplicate orf_pair rows would multiply out (a silent
+    # cartesian blow-up), and pairs present in only one screen are dropped by the
+    # inner join — report how many so that loss is never invisible.
+    for df, lbl in [(df1, "Exp1"), (df2, "Exp2")]:
+        dup = df["orf_pair"].duplicated()
+        if dup.any():
+            raise ValueError(
+                f"{lbl} has {int(dup.sum())} duplicate orf_pair rows "
+                f"(e.g. {df.loc[dup, 'orf_pair'].head(3).tolist()}). Aggregate to "
+                f"one row per gene pair before the joint model.")
+    only1 = set(df1["orf_pair"]) - set(df2["orf_pair"])
+    only2 = set(df2["orf_pair"]) - set(df1["orf_pair"])
+    if only1 or only2:
+        print(f"  NOTE: {len(only1)} pairs only in Exp1, {len(only2)} only in Exp2; "
+              f"inner join keeps the {len(set(df1['orf_pair']) & set(df2['orf_pair']))} shared.")
+
     print("Merging on orf_pair (inner join)...")
-    merged = df1.merge(df2, on="orf_pair", suffixes=("_exp1", "_exp2"))
+    merged = df1.merge(df2, on="orf_pair", suffixes=("_exp1", "_exp2"),
+                       validate="one_to_one")
     print(f"  {len(merged)} shared pairs")
 
     if load_se:

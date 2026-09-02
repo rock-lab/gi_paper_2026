@@ -79,12 +79,13 @@ def load_data(tsv_path):
     files, and drops rows missing a GI score or SE.
     """
     print(f"Loading {tsv_path}...")
-    df = pd.read_csv(tsv_path, sep="\t", index_col=0)
+    df = pd.read_csv(tsv_path, sep="\t")
 
-    # Real result_summary files carry a leading unnamed index column; orf_pair
-    # is then a regular column. If it landed in the index instead, recover it.
-    if PAIR_COL not in df.columns:
-        df = df.reset_index()
+    # Tolerate a leading unnamed index column (files written with index=True)
+    # WITHOUT using index_col=0, which would silently consume the first real
+    # column (orf1) of an index-free TSV. Drop it only if it is really unnamed.
+    if len(df.columns) and str(df.columns[0]).startswith("Unnamed:"):
+        df = df.drop(columns=df.columns[0])
 
     if PAIR_COL not in df.columns:
         raise ValueError(f"Missing column: {PAIR_COL}")
