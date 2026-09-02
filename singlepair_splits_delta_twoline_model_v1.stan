@@ -1,9 +1,6 @@
 // Per-guide-pair two-line (broken-stick) fitness model that predicts Y25.
-//
-// NOTE: this is a readable REFERENCE copy. At runtime gi_scoring.py embeds an
-// identical copy of this model as an inline string (writing it to
-// <output_dir>/gi_twoline_model.stan and compiling that), so editing THIS file
-// alone does not change what the pipeline runs — keep the two in sync.
+// gi_scoring.py loads and compiles THIS file as its default two-line model
+// (override with --stan_model / stan_model_path).
 
 functions {
   vector get_twoline_mean(vector x, array[] int guides, vector alpha_l, vector beta_l, vector gamma, vector beta_e) {

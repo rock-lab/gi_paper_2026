@@ -197,82 +197,27 @@ class GIScoring:
         for dir_path in [self.model_data_dir, self.samples_dir, self.results_dir]:
             dir_path.mkdir(parents=True, exist_ok=True)
 
-        # Lazy load Stan model - only initialize when needed
+        # Two-line fitness model: default to the .stan shipped next to this
+        # script (override with --stan_model / stan_model_path). cmdstanpy
+        # compiles it in place, exactly like every other model in this repo.
+        if stan_model_path is None:
+            stan_model_path = str(
+                Path(__file__).resolve().parent
+                / "singlepair_splits_delta_twoline_model_v1.stan"
+            )
         self.stan_model_path = stan_model_path
-        self._stan_model = None  # Will be loaded on first use
+        self._stan_model = None  # Lazily compiled on first use
 
     @property
     def stan_model(self):
-        """Lazy-load Stan model only when needed."""
+        """Lazy-load (compile) the two-line Stan model only when needed."""
         if self._stan_model is None and HAS_CMDSTAN:
-            logger.info("Initializing Stan model...")
-            if self.stan_model_path:
-                self._stan_model = CmdStanModel(stan_file=self.stan_model_path)
-            else:
-                self._stan_model = self._create_default_stan_model()
+            if not os.path.exists(self.stan_model_path):
+                raise FileNotFoundError(
+                    f"Two-line Stan model not found: {self.stan_model_path}")
+            logger.info(f"Compiling Stan model: {self.stan_model_path}")
+            self._stan_model = CmdStanModel(stan_file=self.stan_model_path)
         return self._stan_model
-
-    def _create_default_stan_model(self):
-        """Create default Stan model for genetic interactions."""
-        stan_code = """
-functions {
-  vector get_twoline_mean(vector x, array[] int guides, vector alpha_l,
-                         vector beta_l, vector gamma, vector beta_e) {
-    int N = num_elements(x);
-    vector[N] mu_ii;
-    for (i in 1:N) {
-      if (x[i] <= gamma[guides[i]]) {
-        mu_ii[i] = alpha_l[guides[i]] + (beta_l[guides[i]] * x[i]);
-      } else {
-        mu_ii[i] = (alpha_l[guides[i]] + beta_l[guides[i]] * gamma[guides[i]]) +
-                   (beta_e[guides[i]] * (x[i] - gamma[guides[i]]));
-      }
-    }
-    return mu_ii;
-  }
-}
-
-data {
-  int<lower=0> N; // Number of data points
-  int<lower=0> J; // Number of guides
-  vector[N] y;    // logfc values
-  vector[N] x;    // generations
-  array[N] int guides; // guide index for each data point
-}
-
-parameters {
-  real<lower=0.01, upper=100> nu_y;
-  vector<lower=0.01, upper=100>[J] sigma;
-  vector<lower=-10, upper=10>[J] alpha_l;
-  vector<lower=-10, upper=10>[J] beta_e;
-  vector<lower=-2, upper=2>[J] beta_l;
-  vector<lower=0.01, upper=20>[J] gamma;
-}
-
-model {
-  vector[N] mu_ii;
-
-  // Priors
-  alpha_l ~ normal(0, 1);
-  beta_e ~ normal(-0.2, 0.5);
-  beta_l ~ normal(0, 0.2);
-  gamma ~ normal(4, 2);
-  sigma ~ normal(0.5, 1);
-  nu_y ~ normal(3, 1);
-
-  mu_ii = get_twoline_mean(x, guides, alpha_l, beta_l, gamma, beta_e);
-  y ~ student_t(nu_y, mu_ii, sigma[guides]);
-}
-
-generated quantities {
-  // Y25: prediction for 25th generation
-  real Y25 = mean((alpha_l + beta_l .* gamma) + (beta_e .* (25.0 - gamma)));
-}
-        """
-
-        model_file = self.output_dir / "gi_twoline_model.stan"
-        model_file.write_text(stan_code)
-        return CmdStanModel(stan_file=str(model_file))
 
     @staticmethod
     def is_negative_control(guide_name: str) -> bool:

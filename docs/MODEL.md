@@ -91,7 +91,7 @@ $$
   depletion slope, $\alpha_\ell$ the intercept,
 - Student-t (with dof $\nu_y$) makes the fit robust to outlier timepoints.
 
-Priors (from the embedded Stan program): $\alpha_\ell\sim N(0,1)$,
+Priors (from [`singlepair_splits_delta_twoline_model_v1.stan`](../singlepair_splits_delta_twoline_model_v1.stan)): $\alpha_\ell\sim N(0,1)$,
 $\beta_e\sim N(-0.2,0.5)$, $\beta_\ell\sim N(0,0.2)$, $\gamma\sim N(4,2)$,
 $\sigma\sim N(0.5,1)$, $\nu_y\sim N(3,1)$.
 
@@ -543,7 +543,7 @@ independent screens agree both in **sign** (δ′ < 0) and in **confidence** (P 
 | [`univariate_normal_uniform_mix_me.stan`](../univariate_normal_uniform_mix_me.stan) | per-screen 1-D mixture **with measurement error** — the joint model's 1-D analogue; optional `--stan` variant |
 | [`joint_normal_uniform_mix.stan`](../joint_normal_uniform_mix.stan) | simple 2-D shared-indicator teaching model (no quadrants, no ME) |
 | [`normal_uniform_mix.stan`](../normal_uniform_mix.stan) | **per-screen 1-D Normal/Uniform mixture (default)** → `prob_interaction_median` |
-| [`singlepair_splits_delta_twoline_model_v1.stan`](../singlepair_splits_delta_twoline_model_v1.stan) | per-guide-pair two-line fitness model (Y25); reference copy — `gi_scoring.py` embeds an identical model inline at runtime |
+| [`singlepair_splits_delta_twoline_model_v1.stan`](../singlepair_splits_delta_twoline_model_v1.stan) | per-guide-pair two-line fitness model (Y25); loaded and compiled by `gi_scoring.py` |
 | [`gi_scoring.py`](../gi_scoring.py), [`logfc_tools.py`](../logfc_tools.py) | fitness fits, Y25, δ′, aggregation |
 | [`gam_correction_standalone.R`](../gam_correction_standalone.R) | GAM de-trending of δ′ vs expected fitness |
 | [`run_joint_model.py`](../run_joint_model.py) | builds Stan data (winsorize 0.10, seed 456, 8×1000/1000), runs the joint model |

@@ -6,10 +6,8 @@ example_out/
 __pycache__/
 *.pyc
 
-# Stan compiled artifacts
+# Stan compiled artifacts (executables built next to each .stan by cmdstanpy)
 *.hpp
-gi_twoline_model
-!gi_twoline_model.stan
 
 # Logs
 *.log
