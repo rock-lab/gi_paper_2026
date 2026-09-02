@@ -21,6 +21,8 @@ import sys
 import os
 import json
 import glob
+import hashlib
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -165,6 +167,17 @@ def run_stan_model_for_pair(args):
     except Exception as e:
         logger.debug(f"Stan model failed for {json_path}: {e}")
         return False
+
+
+def _file_sha256(path, chunk=1 << 20):
+    """Streaming SHA-256 of a file's bytes (used to fingerprint the log2FC input
+    so a re-run against an unchanged input reuses safely, while a changed input is
+    detected). Reads the file once in `chunk`-sized blocks."""
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for block in iter(lambda: fh.read(chunk), b""):
+            h.update(block)
+    return h.hexdigest()
 
 
 class GIScoring:
@@ -438,6 +451,51 @@ class GIScoring:
 
         unique_ids_chunk = unique_ids[start_idx:end_idx]
         logger.info(f"Processing {len(unique_ids_chunk)} guide pairs (indices {start_idx}:{end_idx})")
+
+        # --- Stale-output guard ------------------------------------------------
+        # Model-data JSON and samples are otherwise reused purely because their
+        # filenames exist, so a changed input would silently keep old results.
+        # Fingerprint the input by CONTENT hash: an identical re-run (or a later
+        # chunk of the SAME input) matches and reuses safely; a changed input or
+        # params is rejected unless --force, which starts from a clean tree.
+        manifest_path = self.output_dir / "run_manifest.json"
+        fingerprint = {
+            "input_path": os.path.abspath(logfc_df_path),
+            "input_sha256": _file_sha256(logfc_df_path),
+            "n_input_rows": int(len(logfc_df)),
+            "n_unique_ids": int(len(unique_ids)),
+            "max_guides_per_gene": self.max_guides_per_gene,
+        }
+        prior = None
+        if manifest_path.exists():
+            try:
+                prior = json.loads(manifest_path.read_text()).get("input")
+            except Exception:
+                prior = None
+        model_data_nonempty = any(self.model_data_dir.rglob("*.json"))
+
+        if force:
+            # Start clean so no stale JSON / samples / results survive a rebuild.
+            for d in [self.model_data_dir, self.samples_dir, self.results_dir]:
+                if d.exists():
+                    shutil.rmtree(d)
+                d.mkdir(parents=True, exist_ok=True)
+        elif prior is not None and prior != fingerprint:
+            raise RuntimeError(
+                f"Output dir {self.output_dir} was built from a DIFFERENT input "
+                f"(run_manifest.json does not match {logfc_df_path}). Reusing it "
+                f"would mix stale results — use --force to rebuild cleanly, or point "
+                f"--output_dir at a fresh directory.")
+        elif prior is None and model_data_nonempty:
+            raise RuntimeError(
+                f"Output dir {self.output_dir} already contains model_data but no "
+                f"run_manifest.json to prove it matches {logfc_df_path}. Use --force "
+                f"to rebuild cleanly, or point --output_dir at a fresh directory.")
+
+        manifest_path.write_text(json.dumps({
+            "input": fingerprint,
+            "created": pd.Timestamp.now().isoformat(),
+        }, indent=2))
 
         # Prepare arguments for multiprocessing
         print(f"\nPreparing to process {len(unique_ids_chunk)} guide pairs...")
@@ -894,6 +952,17 @@ class GIScoring:
             logger.error(f"Unknown GAM correction method: {method}")
             return gi_scores_df
 
+        # A "corrected" file must actually be corrected. When GAM correction did
+        # not run (pygam / R+mgcv unavailable, or too few points) the apply_*
+        # helpers return the input frame unchanged, with no y25_delta_corrected
+        # column — writing that under a *_corrected name would be a silent lie.
+        if 'y25_delta_corrected' not in corrected_df.columns:
+            raise RuntimeError(
+                "GAM correction did not run (pygam / R+mgcv unavailable, or too "
+                f"few points), so there is nothing corrected to write to {output_path}. "
+                "Install pygam (or R+mgcv), or use the uncorrected gi_scores.tsv "
+                "(run_example.sh falls back to it automatically).")
+
         # Save corrected scores
         if output_path:
             corrected_df.to_csv(output_path, sep='\t', index=False)
@@ -921,7 +990,10 @@ def main():
     parser.add_argument("--start", type=int, default=0, help="Start index for chunked processing")
     parser.add_argument("--end", type=int, default=-1, help="End index for chunked processing")
     parser.add_argument("--workers", type=int, default=None, help="Number of parallel workers")
-    parser.add_argument("--force", action="store_true", help="Overwrite existing files")
+    parser.add_argument("--force", action="store_true",
+                        help="Rebuild from a clean output tree (clears model_data/samples/"
+                             "results in step 1). Required to reuse an --output_dir whose "
+                             "run_manifest.json does not match the current input.")
     parser.add_argument("--stan_model", help="Path to custom Stan model file")
     parser.add_argument("--gam_method", choices=['python', 'r'], default='python',
                        help="GAM correction method: 'python' (pygam) or 'r' (R/mgcv)")
