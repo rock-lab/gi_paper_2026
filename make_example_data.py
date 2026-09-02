@@ -101,7 +101,7 @@ DEF_MERGED = (
     "joint_mixture/merged_quad_me_trunc_halfsmeared_w010.tsv"
 )
 
-# Single-sgRNA library map produced by build_guide_name_map.py.
+# Single-sgRNA library map (guide_name / orf_id / name / seq / ... columns).
 DEF_GUIDE_MAP = (
     "/store/home/mad/PROJECTS/CRISPRi/gi/tb_ess_library/paper/"
     "H37Rv_single_sgrna_library.tsv"
