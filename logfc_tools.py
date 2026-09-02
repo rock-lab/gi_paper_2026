@@ -136,7 +136,7 @@ def create_experiment_metadata_template():
 
 
 def get_logfc_dataframe_from_metadata(metadata_path, output_path=None, summary_metric="mean",
-                                     pseudo=1.0, lod_limit=20.0):
+                                     pseudo=1.0, lod_limit=20.0, allow_incomplete=False):
     """
     Calculate log2FC from experiment metadata file.
 
@@ -146,6 +146,10 @@ def get_logfc_dataframe_from_metadata(metadata_path, output_path=None, summary_m
         summary_metric (str): How to summarize replicates
         pseudo (float): Pseudocount for log2FC calculation
         lod_limit (float): Limit of detection for filtering low counts
+        allow_incomplete (bool): If False (default), a timepoint that is missing
+            its +ATC or -ATC condition is FATAL — an incomplete experiment must
+            not silently succeed with fewer generations than intended. Set True
+            to skip such timepoints with a warning instead.
 
     Returns:
         pd.DataFrame: Long-format dataframe with log2FC values
@@ -158,6 +162,18 @@ def get_logfc_dataframe_from_metadata(metadata_path, output_path=None, summary_m
     missing_cols = [col for col in required_cols if col not in metadata.columns]
     if missing_cols:
         raise ValueError(f"Missing required columns in metadata: {missing_cols}")
+
+    # Duplicate metadata rows would double-count a condition into the replicate
+    # summary. Each (strain, experiment, generations, atc, count_file_path) must
+    # appear at most once.
+    key_cols = ['strain', 'experiment', 'generations', 'atc', 'count_file_path']
+    dup_mask = metadata.duplicated(subset=key_cols, keep=False)
+    if dup_mask.any():
+        dups = metadata.loc[dup_mask, key_cols].drop_duplicates()
+        raise ValueError(
+            f"Duplicate metadata rows for {len(dups)} "
+            f"(strain,experiment,generations,atc,count_file_path) key(s); each "
+            f"condition must be listed once. First: {dups.iloc[0].to_dict()}")
 
     results = []
 
@@ -174,7 +190,13 @@ def get_logfc_dataframe_from_metadata(metadata_path, output_path=None, summary_m
             minus_atc = gen_group[gen_group['atc'] == 'minus']
 
             if len(plus_atc) == 0 or len(minus_atc) == 0:
-                logger.warning(f"Missing +ATC or -ATC condition for {strain} {experiment} G{generations}")
+                which = '+ATC' if len(plus_atc) == 0 else '-ATC'
+                msg = (f"Incomplete experiment: {strain} {experiment} G{generations} is "
+                       f"missing its {which} condition, so log2FC cannot be computed "
+                       f"for this timepoint")
+                if not allow_incomplete:
+                    raise ValueError(msg + " (pass --allow-incomplete to skip it instead).")
+                logger.warning(msg + " (--allow-incomplete: skipping this timepoint).")
                 continue
 
             # Load count files
@@ -196,8 +218,10 @@ def get_logfc_dataframe_from_metadata(metadata_path, output_path=None, summary_m
                 # Expand tilde in path
                 count_file = os.path.expanduser(count_file)
                 if not os.path.exists(count_file):
-                    logger.error(f"Count file not found: {count_file}")
-                    continue
+                    raise FileNotFoundError(
+                        f"Count file listed in metadata not found: {count_file}. "
+                        f"Every count_file_path in the metadata must exist — refusing "
+                        f"to silently drop a timepoint and run on an incomplete experiment.")
                 df = load_count_file(count_file)
                 ids, counts = get_count_matrix_from_dataframe(df)
                 plus_ids_list.append(ids)
@@ -209,8 +233,10 @@ def get_logfc_dataframe_from_metadata(metadata_path, output_path=None, summary_m
                 # Expand tilde in path
                 count_file = os.path.expanduser(count_file)
                 if not os.path.exists(count_file):
-                    logger.error(f"Count file not found: {count_file}")
-                    continue
+                    raise FileNotFoundError(
+                        f"Count file listed in metadata not found: {count_file}. "
+                        f"Every count_file_path in the metadata must exist — refusing "
+                        f"to silently drop a timepoint and run on an incomplete experiment.")
                 df = load_count_file(count_file)
                 ids, counts = get_count_matrix_from_dataframe(df)
                 minus_ids_list.append(ids)
@@ -218,7 +244,10 @@ def get_logfc_dataframe_from_metadata(metadata_path, output_path=None, summary_m
                 minus_data.append(counts)
 
             if not plus_data or not minus_data:
-                logger.warning(f"No valid count data for {strain} {experiment} G{generations}")
+                msg = f"No valid count data for {strain} {experiment} G{generations}"
+                if not allow_incomplete:
+                    raise ValueError(msg + " (pass --allow-incomplete to skip it instead).")
+                logger.warning(msg + " (--allow-incomplete: skipping this timepoint).")
                 continue
 
             # Align all count files (plus AND minus) to a single canonical row
@@ -559,6 +588,9 @@ if __name__ == "__main__":
     parser.add_argument("--pseudo", type=float, default=1.0, help="Pseudocount for log2FC")
     parser.add_argument("--lod_limit", type=float, default=20.0, help="Limit of detection")
     parser.add_argument("--normalize", action="store_true", help="Normalize using negative controls")
+    parser.add_argument("--allow-incomplete", dest="allow_incomplete", action="store_true",
+                        help="Skip (with a warning) timepoints missing a +ATC/-ATC condition "
+                             "instead of failing. Default: an incomplete experiment is fatal.")
 
     args = parser.parse_args()
 
@@ -577,7 +609,8 @@ if __name__ == "__main__":
         args.metadata,
         summary_metric=args.summary_metric,
         pseudo=args.pseudo,
-        lod_limit=args.lod_limit
+        lod_limit=args.lod_limit,
+        allow_incomplete=args.allow_incomplete
     )
 
     # Check if we have any data
