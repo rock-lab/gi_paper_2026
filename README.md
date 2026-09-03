@@ -51,10 +51,10 @@ Genetic interaction scoring pipeline using Bayesian modeling. This script:
 - Designed for large-scale datasets (>2M guide pairs) with parallel processing capabilities
 
 #### run_per_screen_mixture.py
-Fits the per-screen 1D Normal-Uniform interaction mixture (`normal_uniform_mix.stan`, the model the individual screens were called with; a measurement-error variant is available via `--stan`) to a `result_summary_long_df` TSV, turning each per-screen GI score into a probability of interaction. See Step 4.
+Fits the per-screen 1D Normal-Uniform interaction mixture (`normal_uniform_mix.stan`, the model the individual screens were called with; a measurement-error variant is available via `--stan`) to a `result_summary_long_df` TSV, turning each per-screen GI score into a probability of interaction. See Step 5.
 
 #### run_joint_model.py
-Fits the joint cross-screen quadrant mixture (the primary `joint_normal_uniform_mix_quadrant_me_trunc_halfsmeared.stan` model) to two screens, classifying every gene pair as aggravating / alleviating / discordant / no-interaction. See Step 5.
+Fits the joint cross-screen quadrant mixture (the primary `joint_normal_uniform_mix_quadrant_me_trunc_halfsmeared.stan` model) to two screens, classifying every gene pair as aggravating / alleviating / discordant / no-interaction. See Step 6.
 
 #### merge_joint_results.py
 Merges the per-screen and joint outputs into a single 20-column per-pair results table.
@@ -158,6 +158,7 @@ Key parameters:
 - `--lod_limit`: Limit of detection for filtering low counts (default: 20.0)
 - `--summary_metric`: How to summarize replicates (mean, median, etc.)
 - `--pseudo`: Pseudocount for log2FC calculation (default: 1.0)
+- `--allow-incomplete`: Skip (with a warning) any timepoint missing its +ATC/-ATC condition instead of failing. Default: an incomplete experiment (missing condition/file, or duplicate metadata rows) is a hard error.
 
 ### Step 3: Calculate genetic interaction scores
 
@@ -185,7 +186,7 @@ python gi_scoring.py --output_dir ./gi_analysis --step 2 --start 500000 --end 10
 # Step 3: Calculate Y25_delta (uncorrected GI scores)
 python gi_scoring.py --output_dir ./gi_analysis --step 3
 
-# Step 4 (Optional): Apply GAM correction to GI scores
+# gi_scoring internal step 4 (Optional): Apply GAM correction to GI scores
 python gi_scoring.py --output_dir ./gi_analysis --step 4
 ```
 
@@ -197,7 +198,15 @@ Key parameters:
 - `--step`: Run specific step only (1: data prep, 2: modeling, 3: Y25_delta calculation, 4: GAM correction)
 - `--start/--end`: Indices for chunked processing of large datasets
 - `--workers`: Number of parallel workers (use fewer for Stan models)
-- `--force`: Overwrite existing files
+- `--force`: Rebuild from a clean output tree (clears `model_data/`, `samples/`, `results/` before step 1)
+
+> **Output-directory safety.** Step 1 writes a `run_manifest.json` fingerprinting
+> the log2FC input. Re-running step 1 into an `--output_dir` whose manifest does
+> not match the current input (a changed input, or a pre-existing directory with
+> no manifest) **fails with an error** rather than silently reusing stale
+> `model_data`/`samples`. Pass `--force` to rebuild cleanly, or point
+> `--output_dir` at a fresh directory. (Chunked runs are fine: successive step-1
+> chunks share the same input fingerprint, so no `--force` is needed between them.)
 
 ### Step 4: Aggregate guide-pairs to gene-pairs
 
@@ -498,9 +507,9 @@ separately reports which pairs also clear the 0.5 hit threshold. It prints, for
 reference, how the toy's probabilities compare to the published (golden)
 `example_data/expected/` values.
 
-In a clean run all four known pairs are directionally correct; the three strong
-signals (`ndh`/`ndhA`, `ponA1`/`ponA2`, `ctaE`/`ctaC`) clear 0.5, while the
-weakest positive (`atpB`/`embB`) stays directionally correct but can fall
+In a clean run all five known pairs are directionally correct; the four strong
+signals (`ndh`/`ndhA`, `ponA1`/`ponA2`, `thyX`/`thyA`, `ctaE`/`ctaC`) clear 0.5,
+while the weakest positive (`atpB`/`embB`) stays directionally correct but can fall
 sub-threshold — the joint mixture is re-fit on only ~120 pairs, so its null is
 estimated from far fewer points than the published fit and borderline calls are
 sensitive to it.

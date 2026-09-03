@@ -2,9 +2,9 @@
 #
 #   pip install -r requirements.txt
 #
-# The CmdStan C++ toolchain (compiled/managed by cmdstanpy) is required ONLY for
-# the Bayesian sampling steps (per-screen Step 4 and joint Step 5). Build it once
-# after installing the packages below:
+# The CmdStan C++ toolchain (compiled/managed by cmdstanpy) is required for the
+# Stan sampling steps (GI scoring Step 3, the per-screen mixture Step 5, and the
+# joint model Step 6). Build it once after installing the packages below:
 #
 #   python -c "import cmdstanpy; cmdstanpy.install_cmdstan()"
 #
