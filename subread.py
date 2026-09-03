@@ -11,6 +11,7 @@ Requires the `subread` package on PATH (e.g. `sudo apt install subread`).
 
 import os
 import subprocess
+import contextlib
 import logging
 
 logger = logging.getLogger(__name__)
@@ -26,19 +27,17 @@ def _run(command, label, stdout=None, stderr=None):
     (or inheriting the parent's when None). Raises on a missing executable or a
     nonzero exit — external-program failures must never pass silently."""
     logger.debug("%s command: %s", label, " ".join(command))
-    out_fh = open(stdout, "w") if stdout else None
-    err_fh = open(stderr, "w") if stderr else None
-    try:
-        rc = subprocess.call(command, stdout=out_fh, stderr=err_fh)
-    except FileNotFoundError as e:
-        raise FileNotFoundError(
-            f"Could not run '{command[0]}' for {label}. Is subread installed and on "
-            f"PATH? (e.g. `sudo apt install subread`)") from e
-    finally:
-        if out_fh is not None:
-            out_fh.close()
-        if err_fh is not None:
-            err_fh.close()
+    # ExitStack closes any opened handle on every exit path (including if the
+    # second open() fails after the first succeeded).
+    with contextlib.ExitStack() as stack:
+        out_fh = stack.enter_context(open(stdout, "w")) if stdout else None
+        err_fh = stack.enter_context(open(stderr, "w")) if stderr else None
+        try:
+            rc = subprocess.call(command, stdout=out_fh, stderr=err_fh)
+        except FileNotFoundError as e:
+            raise FileNotFoundError(
+                f"Could not run '{command[0]}' for {label}. Is subread installed and on "
+                f"PATH? (e.g. `sudo apt install subread`)") from e
     if rc != 0:
         raise RuntimeError(f"{label} failed (exit code {rc}): {' '.join(command)}")
     return rc

@@ -379,9 +379,10 @@ def parallel_count_reads(kwargs):
     logger.info("Indexing...")
     pysam.index(output_sorted_bam)
 
-    # Calculate total reads for statistics
-    total_reads = numpy.sum([eval('+'.join(l.rsplit('\t')[2:])) for l in
-                         pysam.idxstats(output_sorted_bam).strip().split("\n")])
+    # Calculate total reads for statistics (builtin sum over a list of ints;
+    # avoids pulling numpy into this module just for one reduction).
+    total_reads = sum([eval('+'.join(l.rsplit('\t')[2:])) for l in
+                       pysam.idxstats(output_sorted_bam).strip().split("\n")])
 
     logger.info("Counting reads ...")
     ## Count the reads from the bam file 
