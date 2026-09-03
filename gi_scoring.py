@@ -459,8 +459,10 @@ class GIScoring:
         # chunk of the SAME input) matches and reuses safely; a changed input or
         # params is rejected unless --force, which starts from a clean tree.
         manifest_path = self.output_dir / "run_manifest.json"
+        # Compared fingerprint is CONTENT-derived only — the input's path (which
+        # can legitimately differ via cwd/symlink for identical content) is stored
+        # for information but excluded from the equality check.
         fingerprint = {
-            "input_path": os.path.abspath(logfc_df_path),
             "input_sha256": _file_sha256(logfc_df_path),
             "n_input_rows": int(len(logfc_df)),
             "n_unique_ids": int(len(unique_ids)),
@@ -494,6 +496,7 @@ class GIScoring:
 
         manifest_path.write_text(json.dumps({
             "input": fingerprint,
+            "input_path": os.path.abspath(logfc_df_path),   # informational only
             "created": pd.Timestamp.now().isoformat(),
         }, indent=2))
 

@@ -218,10 +218,14 @@ def get_logfc_dataframe_from_metadata(metadata_path, output_path=None, summary_m
                 # Expand tilde in path
                 count_file = os.path.expanduser(count_file)
                 if not os.path.exists(count_file):
-                    raise FileNotFoundError(
-                        f"Count file listed in metadata not found: {count_file}. "
-                        f"Every count_file_path in the metadata must exist — refusing "
-                        f"to silently drop a timepoint and run on an incomplete experiment.")
+                    msg = f"Count file listed in metadata not found: {count_file}"
+                    if not allow_incomplete:
+                        raise FileNotFoundError(
+                            msg + ". Every count_file_path in the metadata must exist — "
+                            "refusing to silently drop a timepoint. Pass --allow-incomplete "
+                            "to skip it instead.")
+                    logger.warning(msg + " (--allow-incomplete: skipping this file).")
+                    continue
                 df = load_count_file(count_file)
                 ids, counts = get_count_matrix_from_dataframe(df)
                 plus_ids_list.append(ids)
@@ -233,10 +237,14 @@ def get_logfc_dataframe_from_metadata(metadata_path, output_path=None, summary_m
                 # Expand tilde in path
                 count_file = os.path.expanduser(count_file)
                 if not os.path.exists(count_file):
-                    raise FileNotFoundError(
-                        f"Count file listed in metadata not found: {count_file}. "
-                        f"Every count_file_path in the metadata must exist — refusing "
-                        f"to silently drop a timepoint and run on an incomplete experiment.")
+                    msg = f"Count file listed in metadata not found: {count_file}"
+                    if not allow_incomplete:
+                        raise FileNotFoundError(
+                            msg + ". Every count_file_path in the metadata must exist — "
+                            "refusing to silently drop a timepoint. Pass --allow-incomplete "
+                            "to skip it instead.")
+                    logger.warning(msg + " (--allow-incomplete: skipping this file).")
+                    continue
                 df = load_count_file(count_file)
                 ids, counts = get_count_matrix_from_dataframe(df)
                 minus_ids_list.append(ids)
@@ -270,9 +278,12 @@ def get_logfc_dataframe_from_metadata(metadata_path, output_path=None, summary_m
                         common_ids = np.intersect1d(common_ids, ids)
 
                     if len(common_ids) < 100:  # need a reasonable number of guides
-                        logger.error(
-                            f"Too few common sgRNAs ({len(common_ids)}) across the count "
-                            f"files for {strain} {experiment} G{generations}; skipping")
+                        msg = (f"Too few common sgRNAs ({len(common_ids)}) across the "
+                               f"count files for {strain} {experiment} G{generations}")
+                        if not allow_incomplete:
+                            raise ValueError(msg + " (pass --allow-incomplete to skip this "
+                                             "timepoint instead).")
+                        logger.warning(msg + " (--allow-incomplete: skipping timepoint).")
                         continue
                     logger.warning(
                         f"Count files for {strain} {experiment} G{generations} do not "
@@ -292,25 +303,34 @@ def get_logfc_dataframe_from_metadata(metadata_path, output_path=None, summary_m
                                   for j in range(len(minus_data))]
                     sgrna_ids = common_ids
 
-            # Convert to arrays for log2FC calculation
+            # Convert to arrays for log2FC calculation. The mismatch check lives
+            # OUTSIDE this try so its raise is not swallowed by the except below.
             try:
-                # Concatenate all replicates (both within files and across files)
+                # Concatenate all replicates (both within files and across files).
                 # Each element in plus_data/minus_data is a matrix of shape (n_sgrnas, n_replicates_in_file)
                 plus_matrix = np.hstack(plus_data) if len(plus_data) > 0 else np.array([[]])
                 minus_matrix = np.hstack(minus_data) if len(minus_data) > 0 else np.array([[]])
-
-                logger.debug(f"Plus matrix shape: {plus_matrix.shape} (sgRNAs x replicates)")
-                logger.debug(f"Minus matrix shape: {minus_matrix.shape} (sgRNAs x replicates)")
-
-                # Check that we have the same number of sgRNAs
-                if plus_matrix.shape[0] != minus_matrix.shape[0]:
-                    logger.error(f"Mismatch in sgRNA count: plus has {plus_matrix.shape[0]}, minus has {minus_matrix.shape[0]}")
-                    continue
-
             except Exception as e:
-                logger.error(f"Error creating count matrices: {e}")
+                msg = f"Error creating count matrices for {strain} {experiment} G{generations}: {e}"
+                if not allow_incomplete:
+                    raise ValueError(msg + " (pass --allow-incomplete to skip this "
+                                     "timepoint instead).")
+                logger.warning(msg + " (--allow-incomplete: skipping timepoint).")
                 logger.info(f"  Plus data shapes: {[p.shape for p in plus_data]}")
                 logger.info(f"  Minus data shapes: {[m.shape for m in minus_data]}")
+                continue
+
+            logger.debug(f"Plus matrix shape: {plus_matrix.shape} (sgRNAs x replicates)")
+            logger.debug(f"Minus matrix shape: {minus_matrix.shape} (sgRNAs x replicates)")
+
+            # Check that we have the same number of sgRNAs
+            if plus_matrix.shape[0] != minus_matrix.shape[0]:
+                msg = (f"Mismatch in sgRNA count for {strain} {experiment} G{generations}: "
+                       f"plus has {plus_matrix.shape[0]}, minus has {minus_matrix.shape[0]}")
+                if not allow_incomplete:
+                    raise ValueError(msg + " (pass --allow-incomplete to skip this "
+                                     "timepoint instead).")
+                logger.warning(msg + " (--allow-incomplete: skipping timepoint).")
                 continue
 
             # Apply LOD filtering to experimental condition. The +ATc and -ATc

@@ -139,6 +139,19 @@ def load_base_df(exp1_path, exp2_path):
     else:
         print("  (SE columns not found; skipping se_exp and gi_score_overlaps_zero columns)")
 
+    # Drop pairs with a missing SE in either screen so this base matches the pair
+    # set run_joint_model fits: it drops NaN-SE pairs (they are not fittable), so
+    # keeping them here would make the joint-summary coverage check below flag a
+    # phantom mismatch when both scripts are run directly on raw result_summary
+    # copies. (The example path never hits this — run_per_screen_mixture already
+    # drops NaN-SE rows upstream.)
+    if have_se_cols:
+        n_before = len(base)
+        base = base.dropna(subset=["se_exp1", "se_exp2"]).reset_index(drop=True)
+        if n_before - len(base):
+            print(f"  Dropped {n_before - len(base)} pair(s) with a missing SE "
+                  f"(not fittable by the joint model).")
+
     # `correlation` is optional upstream: the paper's HPC aggregation carries a
     # per-pair guide-level correlation, but the simplified public
     # aggregate_guide_pairs.py does not. Always surface both columns (NaN where
