@@ -76,7 +76,7 @@ Project the per-pair probabilities onto gene x gene matrices: a signed probabili
 
 #### run_example.sh / make_example_data.py / check_example.py
 
-`run_example.sh` is the **runbook**: a shell script that calls each discrete step script in order — for every screen it runs counts → single-screen results, then the joint analysis. Copy it and edit the CONFIG block to run your own data. `make_example_data.py` cuts the 15-gene example dataset from the source data (maintainer-only); `check_example.py` validates a finished example run against the golden tables. See [Reproduce on the example data](#reproduce-on-the-example-data).
+`run_example.sh` is the **runbook**: a shell script that calls each discrete step script in order — for every screen it runs counts → single-screen results, then the joint analysis. Copy it and edit the CONFIG block to run your own data. `make_example_data.py` cuts the 15-gene example dataset from the source data (maintainer-only); `check_example.py` validates a finished example run against the golden tables. See the [Usage Examples](#usage-examples) below to run the shipped example data.
 
 ## Dependencies
 
@@ -117,17 +117,27 @@ External:
 
 ## Usage Examples
 
+The commands below run the shipped **example dataset** (`example_data/`) end to
+end. It has two screens, `exp1` (100 ng/mL ATc) and `exp2` (500 ng/mL ATc),
+and begins from pooled count tables. **Step 1 (FASTQ → counts) does not apply
+to the example**, and sample reads are not included due to size constraints. The code is included as a reference but may need to be adapted to your sequencing and experimental setup.
+
+Run everything from the repo root; outputs go under `example_out/`.
+
+`bash run_example.sh` runs the whole thing in one command; the steps below are
+the same pipeline broken out so you can run or adapt each piece. Steps 2–5 are
+**per screen** — run them once for `exp1` and once for `exp2` — then Step 6
+combines the two screens.
+
 ### Step 1: Process FASTQ files and generate sgRNA counts
 
-> **Starting point.** The supported public pipeline (and the shipped example)
-> **begins with pooled count tables** — see [Reproduce on the example
-> data](#reproduce-on-the-example-data). This FASTQ → counts stage
-> (`process_reads.py`, `subread.py`, `counting_tools.py`) is the lab's
-> read-processing code for starting from raw reads. It requires the external
-> `subread` aligner plus `pysam` (BAM handling). The `subread` command wrappers
-> are unit-tested for correct argument construction and now fail loudly on a
-> nonzero exit code; the modules import without the plotting stack. The stage is
-> not run by the example itself, so validate its output on your own data.
+> **Not part of the example.** The example dataset begins from pooled count
+> tables (Step 2 onward), so this FASTQ → counts stage is **not** run by the
+> example. It is the lab's read-processing code for starting from your own raw
+> reads, and requires the external `subread` aligner plus `pysam` (BAM handling).
+> The `subread` command wrappers are unit-tested for argument construction and
+> fail loudly on a nonzero exit code, but the stage is not exercised end to end
+> by the example — validate its output on your own data.
 
 ```bash
 python process_reads.py sample1.fastq.gz sample2.fastq.gz --library sgRNA_library.fasta --output_dir ./results --workers 5 --mm 1
@@ -146,27 +156,21 @@ Key parameters:
 
 ### Step 2: Calculate log2 fold-changes from count data
 
-First, create an experiment metadata file describing your passaging experiment:
+The example ships a metadata file per screen
+(`example_data/experiment_metadata_exp{1,2}.csv`) that already points at the
+shipped count tables. Calculate log2FC for a screen (shown for `exp1`):
 
 ```bash
-python logfc_tools.py --template --metadata experiment_metadata.csv
+python logfc_tools.py \
+    --metadata example_data/experiment_metadata_exp1.csv \
+    --output example_out/exp1/logfc.txt \
+    --normalize
 ```
 
-This creates a template CSV file with the required columns:
-
-- `strain`: Strain name (e.g., 'H37Rv', 'Msm')
-- `experiment`: Experiment identifier
-- `condition`: Sample/timepoint identifier
-- `atc`: ATC condition ('plus' or 'minus')
-- `generations`: Number of generations/passages
-- `replicate`: Replicate number
-- `count_file_path`: Path to the corresponding .counts file
-
-Then calculate log2FC values:
-
-```bash
-python logfc_tools.py --metadata experiment_metadata.csv --output logfc_results.txt --normalize --lod_limit 20
-```
+For your own data, generate a metadata template first with
+`python logfc_tools.py --template --metadata my_metadata.csv` — it has the
+required columns `strain`, `experiment`, `condition`, `atc` (`plus`/`minus`),
+`generations`, `replicate`, and `count_file_path`.
 
 Key parameters:
 
@@ -180,13 +184,20 @@ Key parameters:
 
 ### Step 3: Calculate genetic interaction scores
 
-Run the full genetic interaction scoring pipeline:
+Fit the per-guide-pair two-line models and compute GI scores (shown for `exp1`):
 
 ```bash
-python gi_scoring.py --logfc_data logfc_results.txt --output_dir ./gi_analysis --workers 8
+python gi_scoring.py \
+    --logfc_data example_out/exp1/logfc.txt \
+    --output_dir example_out/exp1/gi \
+    --workers 4
+
+# optional GAM correction (needs pygam or R + mgcv); writes gi_scores_corrected.tsv
+python gi_scoring.py --output_dir example_out/exp1/gi --step 4
 ```
 
-For large datasets (>2M guide pairs), process in chunks:
+The example is small, so a single command is fine. For large real datasets
+(>2M guide pairs) — **not needed for the example** — process in chunks:
 
 ```bash
 # All chunked commands MUST share the same --output_dir so that later steps
@@ -208,7 +219,7 @@ python gi_scoring.py --output_dir ./gi_analysis --step 3
 python gi_scoring.py --output_dir ./gi_analysis --step 4
 ```
 
-The GAM correction (Step 4) adjusts for systematic biases in the genetic interaction scores based on the expected fitness values. This step can use either Python (pygam) or R (mgcv) for the correction.
+The GAM correction (gi_scoring's internal `--step 4`) adjusts for systematic biases in the genetic interaction scores based on the expected fitness values. This step can use either Python (pygam) or R (mgcv) for the correction.
 
 Key parameters:
 
@@ -235,13 +246,15 @@ score + a pooled SE) into a `result_summary_long_df` table:
 
 ```bash
 python aggregate_guide_pairs.py \
-    gi_analysis/gi_scores_corrected.tsv \
-    result_summary_long_df_<screen>.tsv
+    example_out/exp1/gi/gi_scores_corrected.tsv \
+    example_out/exp1/result_summary_exp1.tsv
 ```
 
-(Uses the GAM-corrected scores if present, else `gi_scores.tsv`.) This public
-aggregation is a **simplified stand-in** for the paper's HPC procedure — see
-**Scope & honesty**.
+(If you ran the optional GAM step, pass `gi_scores_corrected.tsv` as shown;
+otherwise pass `example_out/exp1/gi/gi_scores.tsv`.) This public aggregation is a
+**simplified stand-in** for the paper's HPC procedure, so the example's
+downstream probabilities are meant for *running* the pipeline, not for matching
+the paper's published numbers.
 
 ### Step 5: Per-screen interaction probability
 
@@ -254,8 +267,8 @@ genuine interactions form the diffuse Uniform component.
 
 ```bash
 python run_per_screen_mixture.py \
-    result_summary_long_df_<screen>.tsv \
-    per_screen_out \
+    example_out/exp1/result_summary_exp1.tsv \
+    example_out/exp1/single_screen_exp1.tsv \
     --winsorize-pct 0.10
 ```
 
@@ -281,6 +294,12 @@ alongside the joint model's own class probabilities.
 > the null and smear the interaction component — is available via
 > `--stan univariate_normal_uniform_mix_me.stan`.
 
+**Now repeat Steps 2–5 for `exp2`** (swap `exp1` → `exp2` throughout); both
+screens' `single_screen_exp{1,2}.tsv` feed Step 6. Shortcut: the example also
+ships the pre-derived per-screen tables
+`example_data/gi_input/result_summary_long_df_exp{1,2}_toy.tsv`, so you can skip
+Steps 2–5 and run Step 6 directly from those.
+
 ### Step 6: Joint cross-screen quadrant model
 
 Two screens (here 100 ng and 500 ng ATc) are modeled **jointly**. Each gene pair
@@ -297,9 +316,9 @@ pair a probability of being:
 
 ```bash
 python run_joint_model.py \
-    result_summary_long_df_exp1.tsv \
-    result_summary_long_df_exp2.tsv \
-    joint_out \
+    example_out/exp1/single_screen_exp1.tsv \
+    example_out/exp2/single_screen_exp2.tsv \
+    example_out/joint \
     --winsorize-pct 0.10
 ```
 
@@ -319,13 +338,13 @@ Merge the per-screen and joint outputs into one per-pair table:
 
 ```bash
 python merge_joint_results.py \
-    --exp1-tsv result_summary_long_df_exp1.tsv \
-    --exp2-tsv result_summary_long_df_exp2.tsv \
-    --summary-tsv joint_out_quad_me_trunc_halfsmeared_w010_summary.tsv \
-    --output joint_mixture/merged_quad_me_trunc_halfsmeared_w010.tsv
+    --exp1-tsv example_out/exp1/single_screen_exp1.tsv \
+    --exp2-tsv example_out/exp2/single_screen_exp2.tsv \
+    --summary-tsv example_out/joint_quad_me_trunc_halfsmeared_w010_summary.tsv \
+    --output example_out/merged.tsv
 ```
 
-The merged TSV (`merged_quad_me_trunc_halfsmeared_w010.tsv`) has 20 columns:
+The merged TSV (`example_out/merged.tsv`) has 20 columns:
 
 ```
 orf1, orf2, name1, name2,
@@ -343,20 +362,32 @@ Finally, project the per-pair probabilities onto gene x gene matrices:
 # signed probability (aggravating negative, alleviating positive); the sign is
 # taken from whichever screen has the larger-magnitude GI score:
 python make_signed_prob_matrix.py \
-    --merged-tsv joint_mixture/merged_quad_me_trunc_halfsmeared_w010.tsv \
+    --merged-tsv example_out/merged.tsv \
     --value-mode signed_maxmag \
-    --output signed_prob_matrix.tsv
+    --output example_out/signed_prob_matrix.tsv
 
 # boolean hit matrix; a pair is a hit if ANY directional class prob >= threshold:
 python make_hit_matrix.py \
-    --merged-tsv joint_mixture/merged_quad_me_trunc_halfsmeared_w010.tsv \
+    --merged-tsv example_out/merged.tsv \
     --threshold 0.5 \
-    --output hit_matrix_thr050.tsv
+    --output example_out/hit_matrix_thr050.tsv
 ```
 
 > Both matrix scripts default `--merged-tsv` to the shipped golden example table,
 > so **always pass `--merged-tsv`** (and `--output`) to act on the file you just
 > produced rather than the bundled example.
+
+Finally, confirm the run against the known Set A interactions and the expected
+output structure:
+
+```bash
+python check_example.py \
+    --single1 example_out/exp1/single_screen_exp1.tsv \
+    --single2 example_out/exp2/single_screen_exp2.tsv \
+    --merged example_out/merged.tsv \
+    --signed-matrix example_out/signed_prob_matrix.tsv \
+    --hit-matrix example_out/hit_matrix_thr050.tsv
+```
 
 We call a pair an interaction at `prob >= 0.5`; `0.95` is a stricter "confident"
 cutoff used for high-precision hit lists.
@@ -365,8 +396,6 @@ The derivation of the per-screen `delta_prime` GI score and the optional GAM
 correction are documented in [`docs/MODEL.md`](docs/MODEL.md); a worked
 walk-through of the joint model lives in the `joint_model_demo` notebook under
 [`notebooks/`](notebooks/).
-
-
 
 ## Output Files
 
