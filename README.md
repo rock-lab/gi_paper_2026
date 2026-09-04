@@ -2,14 +2,14 @@
 
 Repository containing the code and methods for genetic interaction screens analysis in M. tuberculosis and M. smegmatis.
 
-> **In a hurry?** Jump to [Reproduce on the example data](#reproduce-on-the-example-data) to run the joint genetic-interaction probability model end-to-end on 15 real genes with one command, or read the model write-up in [`docs/MODEL.md`](docs/MODEL.md).
-
 ## Code
 
 Below is a short legend describing the main files, followed by examples running the code:
 
 #### process_reads.py
+
 Python script for processing FASTQ files containing sgRNA sequencing reads. This script:
+
 - Builds subread alignment indices from sgRNA library FASTA files
 - Aligns reads to the library using the subread aligner
 - Counts aligned reads for each sgRNA
@@ -17,7 +17,9 @@ Python script for processing FASTQ files containing sgRNA sequencing reads. This
 - Merges count and diagnostic files across samples
 
 #### subread.py
+
 Python wrapper functions for interacting with the subread aligner. Provides functions for:
+
 - Building alignment indices (`build_index`)
 - Aligning reads to references (`align`)
 - Feature counting (`featureCounts`)
@@ -25,7 +27,9 @@ Python wrapper functions for interacting with the subread aligner. Provides func
 **Note:** Requires subread to be installed via your OS package manager (e.g., `sudo apt install subread`)
 
 #### counting_tools.py
+
 Comprehensive Python module containing tools for:
+
 - Reading FASTA files
 - DNA sequence manipulation (reverse complement, etc.)
 - Creating revised sgRNA libraries with constant sequences
@@ -35,7 +39,9 @@ Comprehensive Python module containing tools for:
 - Diagnostic reporting and statistics
 
 #### logfc_tools.py
+
 Python module for calculating log2 fold-changes from sgRNA count data. This script:
+
 - Calculates log2FC between +ATC and -ATC conditions across multiple time points
 - Handles multiple replicates with configurable summary statistics (mean, median, etc.)
 - Applies limit of detection filtering and pseudocount corrections
@@ -43,7 +49,9 @@ Python module for calculating log2 fold-changes from sgRNA count data. This scri
 - Processes experimental metadata to organize passaging experiments
 
 #### gi_scoring.py
+
 Genetic interaction scoring pipeline using Bayesian modeling. This script:
+
 - Processes log2FC data to identify all guide pairs for interaction analysis
 - Prepares model data in JSON format for Stan (chunked to bound peak memory; one JSON per guide pair)
 - Runs Bayesian two-line fitness models for each guide pair independently
@@ -51,18 +59,23 @@ Genetic interaction scoring pipeline using Bayesian modeling. This script:
 - Designed for large-scale datasets (>2M guide pairs) with parallel processing capabilities
 
 #### run_per_screen_mixture.py
+
 Fits the per-screen 1D Normal-Uniform interaction mixture (`normal_uniform_mix.stan`, the model the individual screens were called with; a measurement-error variant is available via `--stan`) to a `result_summary_long_df` TSV, turning each per-screen GI score into a probability of interaction. See Step 5.
 
 #### run_joint_model.py
+
 Fits the joint cross-screen quadrant mixture (the primary `joint_normal_uniform_mix_quadrant_me_trunc_halfsmeared.stan` model) to two screens, classifying every gene pair as aggravating / alleviating / discordant / no-interaction. See Step 6.
 
 #### merge_joint_results.py
+
 Merges the per-screen and joint outputs into a single 20-column per-pair results table.
 
 #### make_signed_prob_matrix.py / make_hit_matrix.py
+
 Project the per-pair probabilities onto gene x gene matrices: a signed probability-of-interaction matrix (diverging, centered at 0) and a boolean hit matrix.
 
 #### run_example.sh / make_example_data.py / check_example.py
+
 `run_example.sh` is the **runbook**: a shell script that calls each discrete step script in order — for every screen it runs counts → single-screen results, then the joint analysis. Copy it and edit the CONFIG block to run your own data. `make_example_data.py` cuts the 15-gene example dataset from the source data (maintainer-only); `check_example.py` validates a finished example run against the golden tables. See [Reproduce on the example data](#reproduce-on-the-example-data).
 
 ## Dependencies
@@ -90,6 +103,7 @@ python -c "import cmdstanpy; cmdstanpy.install_cmdstan()"
 Core packages: `cmdstanpy` (Stan interface), `numpy`, `scipy`, `pandas`, `tqdm`.
 
 Optional / step-specific:
+
 - `subread` - only for the optional FASTQ -> counts Step 1 (install via your OS package manager, e.g. `sudo apt install subread`).
 - `pysam` - BAM file handling in Step 1.
 - `pygam` - Python GAM correction in Step 3 (alternative: R + `mgcv`); included in `environment.yml`, **not** in `requirements.txt`.
@@ -97,6 +111,7 @@ Optional / step-specific:
 - `matplotlib`, `seaborn` - only for the demo notebooks / plotting.
 
 External:
+
 - `Stan` / CmdStan - probabilistic programming backend, compiled by `cmdstanpy`; needed for **every** Stan sampling step (GI scoring, the per-screen mixture, and the joint model).
 - `R` with `mgcv` - optional alternative to `pygam` for the GAM correction.
 
@@ -119,6 +134,7 @@ python process_reads.py sample1.fastq.gz sample2.fastq.gz --library sgRNA_librar
 ```
 
 Key parameters:
+
 - Input FASTQ files (positional arguments)
 - `--library`: Path to sgRNA library FASTA file
 - `--output_dir`: Directory for output files (default: ./BAM_and_Counts)
@@ -137,6 +153,7 @@ python logfc_tools.py --template --metadata experiment_metadata.csv
 ```
 
 This creates a template CSV file with the required columns:
+
 - `strain`: Strain name (e.g., 'H37Rv', 'Msm')
 - `experiment`: Experiment identifier
 - `condition`: Sample/timepoint identifier
@@ -152,6 +169,7 @@ python logfc_tools.py --metadata experiment_metadata.csv --output logfc_results.
 ```
 
 Key parameters:
+
 - `--metadata`: Path to experiment metadata CSV file
 - `--output`: Path to output log2FC dataframe
 - `--normalize`: Apply negative control normalization
@@ -193,6 +211,7 @@ python gi_scoring.py --output_dir ./gi_analysis --step 4
 The GAM correction (Step 4) adjusts for systematic biases in the genetic interaction scores based on the expected fitness values. This step can use either Python (pygam) or R (mgcv) for the correction.
 
 Key parameters:
+
 - `--logfc_data`: Path to log2FC dataframe from Step 2
 - `--output_dir`: Directory for all GI analysis outputs
 - `--step`: Run specific step only (1: data prep, 2: modeling, 3: Y25_delta calculation, 4: GAM correction)
@@ -242,6 +261,7 @@ python run_per_screen_mixture.py \
 
 Input contract - the `result_summary_long_df` TSV must contain (a leading
 unnamed index column may be present):
+
 - `orf1`, `orf2`, `orf_pair` - the canonical sorted `"orf1_orf2"` gene-pair id
 - `delta_prime_median` - the per-screen GI score
 - `sd_delta_prime_median` - its standard error
@@ -269,6 +289,7 @@ the 2D `(score_exp1, score_exp2)` plane with soft quadrant boundaries and
 per-pair measurement error - the "half-smeared" truncated model
 `joint_normal_uniform_mix_quadrant_me_trunc_halfsmeared.stan`. It assigns every
 pair a probability of being:
+
 - **concordant** - an interaction with the same sign in both screens, split into
   **aggravating** (both negative) and **alleviating** (both positive),
 - **discordant** - an interaction with opposite signs across screens,
@@ -283,6 +304,7 @@ python run_joint_model.py \
 ```
 
 Parameters (pinned for reproducibility):
+
 - Sampling: 8 chains x (1000 warmup + 1000 sampling), `seed=456`.
 - Support **winsorized** per axis to the `[0.10, 99.90]` percentile range
   (`--winsorize-pct 0.10`), which tightens the Uniform bounds around the
@@ -344,120 +366,12 @@ correction are documented in [`docs/MODEL.md`](docs/MODEL.md); a worked
 walk-through of the joint model lives in the `joint_model_demo` notebook under
 [`notebooks/`](notebooks/).
 
-## Reproduce on the example data
 
-The repository ships a tiny, fully **real** example dataset: **15 published genes**
-("Set A") across **both screens** (100 ng and 500 ng ATc) = 105 gene pairs
-(+ 15 self-pairs). The set is deliberately *representative* — most pairs do not
-interact, with a handful of clear, biologically sensible signals: three
-**negative** (aggravating) redundant-isoenzyme synthetic lethals (`ndh`/`ndhA`
-NADH dehydrogenases, `thyX`/`thyA` thymidylate synthases, `ponA1`/`ponA2`
-class-A PBPs) and two **positive** (alleviating) pairs (`ctaE`/`ctaC` cytochrome
-oxidase, `atpB`/`embB`), plus five inert filler genes. It contains real
-sequencing counts (`example_data/counts/`, both screens), the real per-screen
-guide-pair GI scores aggregated to the gene-pair `result_summary_long_df` inputs
-(`example_data/gi_input/`), and golden expected outputs (`example_data/expected/`).
-
-`run_example.sh` is the single, end-to-end **runbook** — a shell script that
-calls each discrete step script in order. There are **two supported ways to run
-it**:
-
-**1. Fast joint-stage verification (runs the paper's joint model on the 120-pair
-subset).** Starts from the shipped **golden** per-screen gene-pair tables and
-runs only the joint half (one joint Stan fit over the 120 pairs, then merge +
-matrices). Use this to verify the joint-model implementation runs and makes the
-correct **directional** calls with the documented output **structure**. The
-probabilities still differ from the published run (the mixture is re-fit on 120
-pairs, not ~290k) — this is *not* a bit-for-bit reproduction of the archived
-values; see **Scope & honesty**.
-
-```bash
-FROM_GOLDEN=1 bash run_example.sh
-```
-
-**2. Complete counts-to-final-output run (runs end-to-end; does *not* match the
-paper).** For each screen: counts → log2FC → per-guide-pair two-line model → GAM
-correction → guide-pair→gene-pair aggregation → per-screen mixture; then the
-joint model, merge, and matrices. This exercises every script, but the public
-guide→gene-pair aggregation is a **simplified stand-in** for the HPC procedure,
-so the numbers are for *running the pipeline*, not for matching the paper (see
-**Scope & honesty** below).
-
-```bash
-bash run_example.sh
-```
-
-**Input contract.** `bash run_example.sh` reads, per screen, the pooled count
-tables in `example_data/counts/exp{1,2}/` and the metadata CSV
-`example_data/experiment_metadata_exp{1,2}.csv`. `FROM_GOLDEN=1` instead reads
-the golden per-screen tables `example_data/gi_input/result_summary_long_df_exp{1,2}_toy.tsv`.
-
-**Output contract.** Both write the joint artifacts to `example_out/` (override
-with `OUTDIR=...`): the 20-column joint table `example_out/merged.tsv` and the
-gene × gene `example_out/signed_prob_matrix.tsv` / `example_out/hit_matrix_thr050.tsv`.
-The **full run** additionally writes each screen's per-screen table to
-`example_out/exp{1,2}/single_screen_exp{1,2}.tsv`; the **fast run** does not —
-it reads the committed `example_data/gi_input/` tables in place.
-
-**Expected counts (the shipped example).** 15 genes → **120 canonical gene
-pairs** (105 unordered + 15 self). Each per-screen count table has **1600
-constructs** = 900 gene×gene doubles + 600 single-mutant (gene × NT) controls +
-100 NT × NT. log2FC has one row per construct per timepoint (exp1: 1600 × 9
-timepoints = 14,400; exp2: 1600 × 11 = 17,600). Per-guide-pair scoring yields
-≈900 gene×gene doubles per screen (a few may drop for missing baselines);
-aggregation collapses these to the **120** gene pairs, and the joint merge is a
-**120-row, 20-column** table.
-
-The runbook's final step validates the shipped example (known Set A hits vs the
-golden tables via `check_example.py`); delete that block when adapting the
-runbook for your own data. To rebuild the example from the raw HPC sources
-(maintainer-only), see `python make_example_data.py`.
-
-**Troubleshooting.**
-- `FileNotFoundError: Stan model not found` / CmdStan errors → build the
-  toolchain once: `python -c "import cmdstanpy; cmdstanpy.install_cmdstan()"`.
-- `Missing column: sd_delta_prime_median` → the per-screen input lacks the GI
-  SE column; use the shipped `gi_input/*_toy.tsv` (they carry it) or run the
-  full chain, which produces it.
-- `ValueError: Degenerate GI-score support: min_y == max_y` → too few distinct
-  (winsorized) GI scores to fit the mixture; check the input has more than one
-  gene pair with a finite score.
-- Empty / all-NaN matrices → confirm `example_out/merged.tsv` has 120 rows
-  before the matrix steps (an upstream step produced no pairs).
-
-## Scope & honesty
-
-This public repository reproduces the **joint genetic-interaction probability
-model** on a small real example dataset. A few caveats stated plainly:
-
-- The per-screen **guide-pair GI scores are real** (from the published screens),
-  but the public **guide -> gene-pair aggregation** (`aggregate_guide_pairs.py`)
-  is a **simplified stand-in** for the paper's HPC aggregation: it takes the
-  median guide-pair GI score per gene pair plus a pooled standard error, and
-  does **not** reproduce the cluster's richer per-pair posterior model (the
-  extra filtering, hierarchical pooling, and the `correlation` column). On the
-  example data the two diverge substantially — mean absolute difference ≈ 0.67
-  (screen 1) / 0.77 (screen 2), with most pairs shifting by > 0.15 — so
-  `bash run_example.sh` (the full chain, through the simplified aggregation) is
-  meant to **run end-to-end, not to match the paper's numbers**. To isolate the
-  joint model from that aggregation gap, `FROM_GOLDEN=1 bash run_example.sh`
-  starts from the **exact HPC per-screen inputs** shipped in
-  `example_data/gi_input/*.tsv` — but even then the joint mixture is re-fit on the
-  120-pair subset, so the **class calls** match the paper while the exact
-  probabilities still differ (not a bit-for-bit reproduction of the archived
-  values).
-- The example check (`check_example.py`) validates the **structure** (120×20
-  table, unique pairs, complete probabilities, square matrices) and the
-  **directional class calls** of the known Set A pairs — not exact probability
-  values. The shipped `example_data/expected/` values are golden checkpoints for
-  an *informational* comparison, not a pass/fail gate (MCMC is stochastic and the
-  toy refit differs, as above).
-- The interactive per-pair web bundle used for the paper's browsable figures is
-  **intentionally excluded** from this repository.
 
 ## Output Files
 
 ### Step 1 Output (Count Generation)
+
 - Individual `.bam` and `.sorted.bam` files for each sample
 - `.counts` files containing sgRNA read counts
 - `.diagnostics` files with alignment statistics
@@ -465,6 +379,7 @@ model** on a small real example dataset. A few caveats stated plainly:
 - `merged_*_diagnostics.txt` - merged diagnostic statistics
 
 ### Step 2 Output (Log2FC Calculation)
+
 - Log2FC dataframe in tab-delimited format with columns:
   - `strain`: Bacterial strain
   - `experiment`: Experiment identifier
@@ -480,7 +395,9 @@ model** on a small real example dataset. A few caveats stated plainly:
     `orf1`, `orf2`, `seq1`, `seq2`, `guide_name`, `guide_name1`, `guide_name2`
 
 ### Step 3 Output (Genetic Interaction Scoring)
+
 Paths below are relative to `--output_dir`.
+
 - `model_data/`: JSON files for each guide pair (Stan model input)
 - `samples/`: Stan model posterior samples for each guide pair
 - `gi_scores.tsv` (written at the `--output_dir` root): Genetic interaction scores with columns:
@@ -495,58 +412,3 @@ Paths below are relative to `--output_dir`.
 - `gi_scores_corrected.tsv` (at the `--output_dir` root, after Step 4): GAM-corrected GI scores with additional columns:
   - `y25_delta_corrected`: GAM-corrected genetic interaction score
   - `gam_prediction`: GAM model prediction (if using Python method)
-
-## Testing and validation
-
-`run_example.sh` (see [Reproduce on the example data](#reproduce-on-the-example-data))
-doubles as the test harness: it runs the full pipeline — both single screens and
-the joint model — on the shipped 15-gene example dataset, and its final step
-(`check_example.py`) asserts that every known Set A interaction has the correct
-**direction** (its expected class dominates the other interaction classes), and
-separately reports which pairs also clear the 0.5 hit threshold. It prints, for
-reference, how the toy's probabilities compare to the published (golden)
-`example_data/expected/` values.
-
-In a clean run all five known pairs are directionally correct; the four strong
-signals (`ndh`/`ndhA`, `ponA1`/`ponA2`, `thyX`/`thyA`, `ctaE`/`ctaC`) clear 0.5,
-while the weakest positive (`atpB`/`embB`) stays directionally correct but can fall
-sub-threshold — the joint mixture is re-fit on only ~120 pairs, so its null is
-estimated from far fewer points than the published fit and borderline calls are
-sensitive to it.
-
-**The toy probabilities are expected to differ from the published numbers**, so
-the class calls — not the exact values — are the pass/fail criterion. The main
-reasons:
-
-- **Global-mixture re-fit (largest effect)** — the per-screen and joint mixtures
-  are *global* models. On the example they are re-estimated from only ~120
-  interaction-enriched pairs, whereas the published values were fit across all
-  ~290k pairs, so the learned null (and hence the probabilities) differ. The
-  dominant class is unaffected. (For example, `ctaE`/`ctaC` scores ~0.88 in the
-  full fit but ~1.0 on the toy — same call, alleviating.)
-- **Guide→gene aggregation** — the public `aggregate_guide_pairs.py` is a
-  documented approximation of the internal HPC step (see
-  [Scope & honesty](#scope--honesty)).
-- **Stan sampling / GAM** — seeded MCMC still varies by CmdStan/compiler version,
-  and Python (`pygam`) vs R (`mgcv`) GAM differ slightly.
-
-## Pipeline Overview
-
-This repository provides a three-step pipeline for processing genetic interaction screen data:
-
-1. **Read Processing & Counting**: Convert FASTQ files to sgRNA count matrices
-2. **Log2FC Calculation**: Calculate log2 fold-changes between +ATC/-ATC conditions across multiple time points
-3. **Genetic Interaction Scoring**: Use Bayesian modeling to identify genetic interactions between gene pairs
-
-The pipeline is designed for large-scale CRISPRi passaging experiments where:
-- sgRNA libraries target genes of interest in M. tuberculosis and M. smegmatis
-- Samples are collected at multiple time points during passaging
-- Each time point has both +ATC (CRISPRi ON) and -ATC (CRISPRi OFF) conditions
-- Log2FC values represent the fitness effect of gene knockdown over time
-- Genetic interaction scores quantify non-additive fitness effects between gene pairs
-
-The pipeline chunks the per-guide-pair fitting to bound **peak memory** and parallelizes across workers. Note that the on-disk layout is **file-heavy**: it writes one JSON plus one samples table per guide pair (the toy run of ~3,200 fits produced ~9,600 files / ~1 GB), so at the million-guide-pair scale plan for millions of small files and hundreds of GB per screen — run on a compute partition (not a login node), stage small files on local scratch, write sharded outputs, and watch your inode quota. The final output provides:
-- **Y25_delta**: Raw genetic interaction scores (Y25_double - Y25_expected)
-- **Y25_delta_corrected** (optional): GAM-corrected scores that account for systematic biases
-
-GAM correction helps remove systematic deviations that correlate with expected fitness values, providing more accurate genetic interaction measurements for network analysis.
