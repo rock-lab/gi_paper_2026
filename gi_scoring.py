@@ -5,7 +5,8 @@ Genetic interaction scoring pipeline for CRISPRi screen data.
 
 This module provides a streamlined implementation of the genetic interaction
 scoring pipeline, designed to handle large-scale datasets (>2M guide pairs)
-with memory-efficient chunked processing.
+with chunked processing that bounds peak memory (one JSON + samples file per
+guide pair; see the README note on the file-heavy layout at scale).
 
 Key steps:
 1. Prepare model data from log2FC dataframes (JSON format for Stan)

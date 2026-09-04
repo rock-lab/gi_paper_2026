@@ -646,7 +646,10 @@ if __name__ == "__main__":
     if 'orf1' in df.columns and 'orf2' in df.columns:
         df = add_single_mutant_fitness(df)
 
-    # Save results
+    # Save results (create the output's parent directory if needed, so an
+    # --output like example_out/exp1/logfc.txt works without a prior mkdir).
+    out_parent = os.path.dirname(os.path.abspath(args.output))
+    os.makedirs(out_parent, exist_ok=True)
     df.to_csv(args.output, sep='\t', index=False)
     logger.info(f"Saved {len(df)} log2FC measurements to {args.output}")
     if 'log2fc_delta' in df.columns:

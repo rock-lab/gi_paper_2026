@@ -132,7 +132,7 @@ def main():
     print("  pass = correct interaction DIRECTION (expected class dominates the other two")
     print("  interaction classes). Clearing the 0.50 hit threshold is reported separately:")
     print("  borderline pairs can fall short when the global mixture is re-fit on only ~120")
-    print("  pairs (see README, 'Testing and validation').")
+    print("  pairs (the toy re-fit differs from the paper's full-cohort fit).")
     ok = True
     n_confident = 0
     for o1, o2, klass, label in CHECKS:

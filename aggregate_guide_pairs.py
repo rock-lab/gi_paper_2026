@@ -85,8 +85,8 @@ Usage:
 
 Example:
     python aggregate_guide_pairs.py \\
-        example_data/.../gi_scores_corrected.tsv \\
-        example_data/gi_input/result_summary_long_df_exp1.tsv
+        example_out/exp1/gi/gi_scores_corrected.tsv \\
+        example_out/exp1/result_summary_exp1.tsv
 """
 
 import argparse

@@ -14,10 +14,10 @@ columns and joined onto the per-screen GI scores.
 
 Usage:
     python merge_joint_results.py \
-        --exp1-tsv result_summary_long_df_exp1.tsv \
-        --exp2-tsv result_summary_long_df_exp2.tsv \
-        --summary-tsv joint_out_quad_me_trunc_halfsmeared_w010_summary.tsv \
-        --output merged_quad_me_trunc_halfsmeared_w010.tsv
+        --exp1-tsv example_out/exp1/single_screen_exp1.tsv \
+        --exp2-tsv example_out/exp2/single_screen_exp2.tsv \
+        --summary-tsv example_out/joint_quad_me_trunc_halfsmeared_w010_summary.tsv \
+        --output example_out/merged.tsv
 
 Output: 20-column TSV
     orf1, orf2, name1, name2,

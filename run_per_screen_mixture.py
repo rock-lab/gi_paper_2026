@@ -30,8 +30,8 @@ Usage:
 
 Example:
     python run_per_screen_mixture.py \\
-        example_data/gi_input/result_summary_exp1.tsv \\
-        example_data/gi_input/result_summary_exp1_with_prob.tsv \\
+        example_out/exp1/result_summary_exp1.tsv \\
+        example_out/exp1/single_screen_exp1.tsv \\
         --winsorize-pct 0.10
 
 Input:
