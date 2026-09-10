@@ -1,3 +1,6 @@
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22694611.svg)](https://doi.org/10.5281/zenodo.22694611)
+
+
 # Genetic Interaction Screens in Mycobacterium tuberculosis and M. smegmatis
 
 Repository containing the code and methods for genetic interaction screens analysis in M. tuberculosis and M. smegmatis.
