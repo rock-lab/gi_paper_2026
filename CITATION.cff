@@ -1,0 +1,131 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the associated paper (see preferred-citation below)."
+title: "Analysis code for: Comprehensive mapping of essential-gene interactions in M. tuberculosis"
+type: software
+authors:
+  - given-names: "Isaac J."
+    family-names: Kresse
+    affiliation: "Laboratory of Host-Pathogen Biology, The Rockefeller University, New York, NY 10065, USA"
+  - given-names: "Natalie Y."
+    family-names: Sayegh
+    affiliation: "Laboratory of Host-Pathogen Biology, The Rockefeller University, New York, NY 10065, USA"
+  - given-names: Vanisha
+    family-names: Munsamy-Govender
+    affiliation: "Laboratory of Host-Pathogen Biology, The Rockefeller University, New York, NY 10065, USA"
+  - given-names: Allen
+    family-names: Na
+    affiliation: "Laboratory of Host-Pathogen Biology, The Rockefeller University, New York, NY 10065, USA"
+  - given-names: Samuel
+    family-names: Nitz
+    affiliation: "Laboratory of Host-Pathogen Biology, The Rockefeller University, New York, NY 10065, USA"
+  - given-names: Yaprak
+    family-names: Ozakman
+    affiliation: "Immunology Program, Sloan Kettering Institute, Memorial Sloan Kettering Cancer Center, New York, New York, USA"
+  - given-names: Barbara
+    family-names: Bosch
+    affiliation: "Laboratory of Host-Pathogen Biology, The Rockefeller University, New York, NY 10065, USA"
+  - given-names: Sebastian
+    family-names: "Gonzalez Behn-Eschenburg"
+    affiliation: "Laboratory of Host-Pathogen Biology, The Rockefeller University, New York, NY 10065, USA"
+  - given-names: "Nicholas C."
+    family-names: Poulton
+    affiliation: "Laboratory of Host-Pathogen Biology, The Rockefeller University, New York, NY 10065, USA"
+  - given-names: Abhijna
+    family-names: Reddy
+    affiliation: "Laboratory of Host-Pathogen Biology, The Rockefeller University, New York, NY 10065, USA"
+  - given-names: Joshua
+    family-names: Wallach
+    affiliation: "Department of Microbiology and Immunology, Weill Cornell Medicine, New York, NY 10065, USA"
+  - given-names: Rodrigo
+    family-names: "Aguilera Olvera"
+    affiliation: "Department of Microbiology and Immunology, Weill Cornell Medicine, New York, NY 10065, USA"
+  - given-names: Anthony
+    family-names: Castro
+    affiliation: "Department of Microbiology and Immunology, Weill Cornell Medicine, New York, NY 10065, USA"
+  - given-names: Heather
+    family-names: Kim
+    affiliation: "Department of Microbiology and Immunology, Weill Cornell Medicine, New York, NY 10065, USA"
+  - given-names: "Andrew I."
+    family-names: Wong
+    affiliation: "Laboratory of Host-Pathogen Biology, The Rockefeller University, New York, NY 10065, USA"
+  - given-names: Nicolai
+    family-names: Tornow
+    affiliation: "Laboratory of Host-Pathogen Biology, The Rockefeller University, New York, NY 10065, USA; Tri-Institutional PhD Program in Chemical Biology, Weill Cornell Medicine, The Rockefeller University, Memorial Sloan Kettering Cancer Center, New York, NY 10065, USA"
+  - given-names: "Stephanie A."
+    family-names: Bueler
+    affiliation: "Molecular Medicine Program, The Hospital for Sick Children, Toronto, Ontario, Canada"
+  - given-names: "Wayne W.H."
+    family-names: Law
+    affiliation: "Molecular Medicine Program, The Hospital for Sick Children, Toronto, Ontario, Canada"
+  - given-names: "Michael S."
+    family-names: Glickman
+    affiliation: "Immunology Program, Sloan Kettering Institute, Memorial Sloan Kettering Cancer Center, New York, New York, USA"
+  - given-names: "John L."
+    family-names: Rubinstein
+    affiliation: "Molecular Medicine Program, The Hospital for Sick Children, Toronto, Ontario, Canada; Department of Medical Biophysics, The University of Toronto, Toronto, Ontario, Canada; Department of Biochemistry, The University of Toronto, Toronto, Ontario, Canada"
+  - given-names: Dirk
+    family-names: Schnappinger
+    affiliation: "Department of Microbiology and Immunology, Weill Cornell Medicine, New York, NY 10065, USA"
+  - given-names: "Michael A."
+    family-names: DeJesus
+    affiliation: "Laboratory of Host-Pathogen Biology, The Rockefeller University, New York, NY 10065, USA"
+  - given-names: "Jeremy M."
+    family-names: Rock
+    affiliation: "Laboratory of Host-Pathogen Biology, The Rockefeller University, New York, NY 10065, USA"
+repository-code: "https://github.com/rock-lab/gi_paper_2026"
+license: GPL-3.0-or-later
+version: 1.0.0
+# date-released: 2026-XX-XX   # set to the GitHub release date when cutting the release
+preferred-citation:
+  type: article
+  title: "Comprehensive mapping of essential-gene interactions in M. tuberculosis"
+  journal: "Nature"
+  year: 2026
+  notes: "Isaac J. Kresse and Natalie Y. Sayegh contributed equally to this work. Accepted; in press. Update year/volume/pages/DOI on publication."
+  authors:
+    - given-names: "Isaac J."
+      family-names: Kresse
+    - given-names: "Natalie Y."
+      family-names: Sayegh
+    - given-names: Vanisha
+      family-names: Munsamy-Govender
+    - given-names: Allen
+      family-names: Na
+    - given-names: Samuel
+      family-names: Nitz
+    - given-names: Yaprak
+      family-names: Ozakman
+    - given-names: Barbara
+      family-names: Bosch
+    - given-names: Sebastian
+      family-names: "Gonzalez Behn-Eschenburg"
+    - given-names: "Nicholas C."
+      family-names: Poulton
+    - given-names: Abhijna
+      family-names: Reddy
+    - given-names: Joshua
+      family-names: Wallach
+    - given-names: Rodrigo
+      family-names: "Aguilera Olvera"
+    - given-names: Anthony
+      family-names: Castro
+    - given-names: Heather
+      family-names: Kim
+    - given-names: "Andrew I."
+      family-names: Wong
+    - given-names: Nicolai
+      family-names: Tornow
+    - given-names: "Stephanie A."
+      family-names: Bueler
+    - given-names: "Wayne W.H."
+      family-names: Law
+    - given-names: "Michael S."
+      family-names: Glickman
+    - given-names: "John L."
+      family-names: Rubinstein
+    - given-names: Dirk
+      family-names: Schnappinger
+    - given-names: "Michael A."
+      family-names: DeJesus
+    - given-names: "Jeremy M."
+      family-names: Rock

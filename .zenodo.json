@@ -1,0 +1,42 @@
+{
+  "title": "Analysis code for: Comprehensive mapping of essential-gene interactions in M. tuberculosis",
+  "upload_type": "software",
+  "description": "Code and a runnable example dataset for the probabilistic genetic-interaction analysis in Kresse, Sayegh, et al., \"Comprehensive mapping of essential-gene interactions in M. tuberculosis\" (Nature, accepted). Includes the per-guide-pair two-line fitness model, the per-screen and joint Bayesian Normal/Uniform mixture models, and a 15-gene example dataset that runs end to end from pooled count tables to gene x gene interaction matrices.",
+  "notes": "Isaac J. Kresse and Natalie Y. Sayegh contributed equally to this work.",
+  "license": "GPL-3.0-or-later",
+  "access_right": "open",
+  "keywords": [
+    "Mycobacterium tuberculosis",
+    "genetic interactions",
+    "CRISPRi",
+    "essential genes",
+    "epistasis",
+    "Bayesian modeling",
+    "Stan"
+  ],
+  "creators": [
+    {"name": "Kresse, Isaac J.", "affiliation": "Laboratory of Host-Pathogen Biology, The Rockefeller University, New York, NY 10065, USA"},
+    {"name": "Sayegh, Natalie Y.", "affiliation": "Laboratory of Host-Pathogen Biology, The Rockefeller University, New York, NY 10065, USA"},
+    {"name": "Munsamy-Govender, Vanisha", "affiliation": "Laboratory of Host-Pathogen Biology, The Rockefeller University, New York, NY 10065, USA"},
+    {"name": "Na, Allen", "affiliation": "Laboratory of Host-Pathogen Biology, The Rockefeller University, New York, NY 10065, USA"},
+    {"name": "Nitz, Samuel", "affiliation": "Laboratory of Host-Pathogen Biology, The Rockefeller University, New York, NY 10065, USA"},
+    {"name": "Ozakman, Yaprak", "affiliation": "Immunology Program, Sloan Kettering Institute, Memorial Sloan Kettering Cancer Center, New York, New York, USA"},
+    {"name": "Bosch, Barbara", "affiliation": "Laboratory of Host-Pathogen Biology, The Rockefeller University, New York, NY 10065, USA"},
+    {"name": "Gonzalez Behn-Eschenburg, Sebastian", "affiliation": "Laboratory of Host-Pathogen Biology, The Rockefeller University, New York, NY 10065, USA"},
+    {"name": "Poulton, Nicholas C.", "affiliation": "Laboratory of Host-Pathogen Biology, The Rockefeller University, New York, NY 10065, USA"},
+    {"name": "Reddy, Abhijna", "affiliation": "Laboratory of Host-Pathogen Biology, The Rockefeller University, New York, NY 10065, USA"},
+    {"name": "Wallach, Joshua", "affiliation": "Department of Microbiology and Immunology, Weill Cornell Medicine, New York, NY 10065, USA"},
+    {"name": "Aguilera Olvera, Rodrigo", "affiliation": "Department of Microbiology and Immunology, Weill Cornell Medicine, New York, NY 10065, USA"},
+    {"name": "Castro, Anthony", "affiliation": "Department of Microbiology and Immunology, Weill Cornell Medicine, New York, NY 10065, USA"},
+    {"name": "Kim, Heather", "affiliation": "Department of Microbiology and Immunology, Weill Cornell Medicine, New York, NY 10065, USA"},
+    {"name": "Wong, Andrew I.", "affiliation": "Laboratory of Host-Pathogen Biology, The Rockefeller University, New York, NY 10065, USA"},
+    {"name": "Tornow, Nicolai", "affiliation": "Laboratory of Host-Pathogen Biology, The Rockefeller University, New York, NY 10065, USA; Tri-Institutional PhD Program in Chemical Biology, Weill Cornell Medicine, The Rockefeller University, Memorial Sloan Kettering Cancer Center, New York, NY 10065, USA"},
+    {"name": "Bueler, Stephanie A.", "affiliation": "Molecular Medicine Program, The Hospital for Sick Children, Toronto, Ontario, Canada"},
+    {"name": "Law, Wayne W.H.", "affiliation": "Molecular Medicine Program, The Hospital for Sick Children, Toronto, Ontario, Canada"},
+    {"name": "Glickman, Michael S.", "affiliation": "Immunology Program, Sloan Kettering Institute, Memorial Sloan Kettering Cancer Center, New York, New York, USA"},
+    {"name": "Rubinstein, John L.", "affiliation": "Molecular Medicine Program, The Hospital for Sick Children, Toronto, Ontario, Canada; Department of Medical Biophysics, The University of Toronto, Toronto, Ontario, Canada; Department of Biochemistry, The University of Toronto, Toronto, Ontario, Canada"},
+    {"name": "Schnappinger, Dirk", "affiliation": "Department of Microbiology and Immunology, Weill Cornell Medicine, New York, NY 10065, USA"},
+    {"name": "DeJesus, Michael A.", "affiliation": "Laboratory of Host-Pathogen Biology, The Rockefeller University, New York, NY 10065, USA"},
+    {"name": "Rock, Jeremy M.", "affiliation": "Laboratory of Host-Pathogen Biology, The Rockefeller University, New York, NY 10065, USA"}
+  ]
+}
